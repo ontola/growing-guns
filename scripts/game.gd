@@ -2134,6 +2134,8 @@ func _maybe_start_match() -> void:
 	elif NetworkManager.players.size() < 2:
 		_set_music_energy.rpc(1)
 		return
+	if GameNight.launched_by_daemon:
+		GameNightBridge.settings.apply_match(self)
 	_set_game_state.rpc(State.PLAYING)
 	current_round = 1
 	coop_wave = 1
@@ -2209,7 +2211,8 @@ func _start_round_now() -> void:
 		# In coop/wave mode, we do not use round modifiers (map variants).
 		var mod := ""
 		if not is_coop_mode():
-			mod = _forced_round_modifier if _force_round_modifier else ROUND_MODIFIERS_SCRIPT.pick_for_round()
+			var chance: float = GameNightBridge.settings.modifier_chance() if GameNight.launched_by_daemon else ROUND_MODIFIERS_SCRIPT.MODIFIER_CHANCE
+			mod = _forced_round_modifier if _force_round_modifier else ROUND_MODIFIERS_SCRIPT.pick_for_round(chance)
 		_set_round_modifier.rpc(mod)
 	# Round opens at "low" — the track plays calmly until the first shot.
 	# Shooting bumps to mid, taking damage bumps to high.
@@ -3364,7 +3367,7 @@ func _begin_card_pick_for_loser(loser_id: int) -> void:
 		# only when another HUMAN is waiting on them — the timeout exists to
 		# stop players stalling each other, and bots don't mind waiting.
 		if _human_count() > 1:
-			pending_pick_deadlines[loser_id] = CARD_PICK_TIMEOUT
+			pending_pick_deadlines[loser_id] = GameNightBridge.settings.card_pick_seconds() if GameNight.launched_by_daemon else CARD_PICK_TIMEOUT
 	if _is_bot_id(loser_id):
 		_bot_auto_pick.call_deferred(loser_id)
 

@@ -46,6 +46,9 @@ jobs:
           sudo chmod +x /usr/local/bin/godot
           godot --version
 
+      - name: Test GameNight settings
+        run: python3 tools/test_gamenight_settings.py --godot godot
+
       # Install export templates so headless export-release works for mac+win.
       - name: Install Godot export templates
         run: |

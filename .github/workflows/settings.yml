@@ -1,0 +1,20 @@
+name: GameNight settings
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  settings:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Godot
+        run: |
+          curl -fL -o /tmp/godot.zip https://github.com/godotengine/godot/releases/download/4.6.2-stable/Godot_v4.6.2-stable_linux.x86_64.zip
+          unzip -q /tmp/godot.zip -d /tmp
+          chmod +x /tmp/Godot_v4.6.2-stable_linux.x86_64
+      - name: Verify declarations, validation and gameplay timing
+        run: python3 tools/test_gamenight_settings.py --godot /tmp/Godot_v4.6.2-stable_linux.x86_64

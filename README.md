@@ -23,3 +23,7 @@ The build is exported to `build/macos/MoreRounds.zip`. This archive contains the
 - **Hosting:** Use the "HOST MATCH" button in the main menu.
 - **Joining:** Colleagues can use the auto-discovery list or join via IP using the "JOIN BY IP" field.
 - **Solo Play:** Use "VS BOT" to test mechanics without other players.
+
+## GameNight customization
+
+Parties can change rounds to win, round-modifier frequency and card-choice time. See [GameNight settings](docs/gamenight-settings.md) for ranges, timing and tests.

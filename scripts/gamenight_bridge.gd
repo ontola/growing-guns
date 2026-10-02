@@ -9,6 +9,8 @@ extends Node
 ## GameNight.launched_by_daemon, which is only true when the daemon spawned
 ## this process with GAMENIGHT=1.
 
+var settings := preload("res://scripts/gamenight_settings.gd").new()
+
 const GAME_SCENE := "res://scenes/game.tscn"
 const START_SCENE := "res://scenes/start_screen.tscn"
 
@@ -75,6 +77,7 @@ func _ready() -> void:
 	# — and neither is the command line: Godot 4.7 ignores `--windowed`,
 	# `--position` and `--resolution` when the project setting says fullscreen
 	# (measured, all three). The setting itself was the only lever.
+	settings.connect_host(GameNight)
 	GameNight.prepared.connect(_on_prepared)
 	GameNight.started.connect(_on_started)
 	GameNight.paused.connect(_on_paused)

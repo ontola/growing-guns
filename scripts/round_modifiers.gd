@@ -31,8 +31,8 @@ const FOG_DENSITY := 0.92
 const MODIFIER_CHANCE := 0.3       # fraction of rounds that roll a modifier
 
 
-static func pick_for_round() -> String:
-	if randf() >= MODIFIER_CHANCE:
+static func pick_for_round(chance: float = MODIFIER_CHANCE) -> String:
+	if randf() >= clampf(chance, 0.0, 1.0):
 		return ""
 	return IDS[randi() % IDS.size()]
 
