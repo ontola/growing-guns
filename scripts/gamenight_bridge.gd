@@ -60,23 +60,11 @@ func _ready() -> void:
 	# would unpause it.
 	process_mode = Node.PROCESS_MODE_ALWAYS
 
-	# Taking the screen is what `start` means, and nothing before it: the
-	# daemon launches us long before anybody asks to play, so the party is
-	# looking at the lobby when our window turns up.
-	#
-	# Which is why `window/size/mode` in project.godot is now 0 (windowed)
-	# rather than 3 (fullscreen), with standalone play going fullscreen from
-	# `_ready` above instead.
-	#
-	# That setting applied before a single line of this script ran: the process
-	# opened *fullscreen*, covering the lobby and dragging the desktop onto its
-	# own macOS Space, and the first thing we then did was minimise it again.
-	# On macOS a fullscreen window minimises by way of windowed, so the party
-	# watched a game they hadn't asked for open fullscreen, shrink and vanish.
-	# Nothing this script can do at `_ready()` is early enough to prevent that
-	# — and neither is the command line: Godot 4.7 ignores `--windowed`,
-	# `--position` and `--resolution` when the project setting says fullscreen
-	# (measured, all three). The setting itself was the only lever.
+	# Start minimized at engine boot, before autoloads or scene loading can
+	# expose a window. Only the shared screen helper handles Start/Resume.
+	# Standalone play explicitly claims borderless fullscreen above.
+	GameNight.party_updated.connect(_sync_host_music)
+	_sync_host_music(GameNight.party)
 	settings.connect_host(GameNight)
 	GameNight.prepared.connect(_on_prepared)
 	GameNight.started.connect(_on_started)
@@ -317,3 +305,8 @@ func _on_disposed(session_id: String) -> void:
 		get_tree().change_scene_to_file(START_SCENE)
 	# The process stays resident and may be prepared again later in the night;
 	# GameNightScreen puts us back off-screen off the same `dispose`.
+
+
+func _sync_host_music(party: Dictionary) -> void:
+	var track: Variant = party.get("now_playing", {})
+	ProceduralMusic.set_host_music_playing(track is Dictionary and bool(track.get("playing", false)))

@@ -42,7 +42,7 @@ file_logging/enable_file_logging=true
 
 window/size/viewport_width=1281
 window/size/viewport_height=720
-window/size/mode=0
+window/size/mode=1
 window/size/no_focus=true
 window/stretch/mode="canvas_items"
 window/vsync/vsync_mode=0

@@ -31,3 +31,16 @@ Parties can change rounds to win, round-modifier frequency and card-choice time.
 ## Assistant controls
 
 See [GameNight settings](docs/gamenight-settings.md) for all supported tweaks, their ranges and when they apply. The phone and lobby assistant discover these controls automatically from the running game.
+
+## GameNight window and audio
+
+Background preparation starts minimized. Only Play and Resume bring the game
+into borderless fullscreen; focusing a window never starts a match.
+
+When GameNight detects host music playing, Growing Guns mutes its soundtrack
+buses and leaves sound effects audible. When that music pauses or stops, the
+game soundtrack returns at the player's existing volume.
+
+After importing the project, run `godot --headless --path . --script
+res://tests/gamenight_window.gd` to check startup settings and audio bus behavior.
+Windows window visibility and focus still need a rendered lifecycle test.

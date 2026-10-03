@@ -102,6 +102,13 @@ var _set_frozen_energy: Array[float] = [0.0, 0.0]
 var _last_bar_index: int = -1
 
 
+## Host music takes priority over our soundtrack, never over game effects.
+## Keep player volume/enabled preferences intact so they apply when it stops.
+func set_host_music_playing(playing: bool) -> void:
+	for bus_name in MUSIC_BUS_NAMES:
+		var index := AudioServer.get_bus_index(bus_name)
+		if index >= 0: AudioServer.set_bus_mute(index,playing)
+
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	_ensure_music_bus()

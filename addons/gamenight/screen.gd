@@ -49,20 +49,11 @@ const EXIT_FULLSCREEN_RETRY_MS := 1200
 ## dismissed.
 const OFF_SCREEN_DEADLINE_MS := 8000
 
-## How long to wait, after gaining focus, for the window to actually come back
-## on screen before deciding it isn't going to. Comfortably longer than the
-## deminiaturise animation, short enough that a real Cmd+Tab feels instant.
-const FOCUS_SETTLE_MS := 1500
-
 ## Bumped every time the window is asked to do something. Both loops below run
 ## across frames, so a `start` arriving mid-retry would otherwise be fighting a
 ## still-running "get off the screen" — the party would watch the game they
 ## just picked minimise itself. Whoever bumps this last wins.
 var _epoch: int = 0
-
-## Whether we have ever actually made it off the screen. Until then, focus
-## arriving means "your window just opened", not "a player asked for you".
-var _has_been_out_of_the_way: bool = false
 
 ## The frame cap in force before we throttled — the player's own graphics
 ## setting, most likely, which is not ours to overwrite.
@@ -90,12 +81,7 @@ func _ready() -> void:
 	GameNight.resumed.connect(func(_session: String) -> void: take_the_screen("resume"))
 	GameNight.paused.connect(func(_session: String) -> void: go_quiet("pause"))
 	GameNight.disposed.connect(func(_session: String) -> void: go_quiet())
-	if not _headless:
-		# Cmd+Tabbing to a warm game is the party asking to play it. Window
-		# focus is the one signal GameNight cannot override — the window server
-		# decides who is on screen — so rather than fight it, report it and let
-		# the daemon rule on it.
-		get_window().focus_entered.connect(_on_focus_in)
+
 
 
 ## Get off the screen and shut up. Deliberately *not* a frame cap: warming is
@@ -150,8 +136,6 @@ func _leave_the_screen(epoch: int) -> void:
 	while epoch == _epoch:
 		var mode := DisplayServer.window_get_mode()
 		if mode == DisplayServer.WINDOW_MODE_MINIMIZED:
-			# From here on, focus coming back is a person asking for us.
-			_has_been_out_of_the_way = true
 			return
 		var now := Time.get_ticks_msec()
 		if now >= deadline:
@@ -161,7 +145,11 @@ func _leave_the_screen(epoch: int) -> void:
 		# fullscreen window is a two-step move — out of the Space, then into
 		# the Dock — and asking for the destination while the first step is
 		# still animating gets the whole thing restarted.
-		if mode == DisplayServer.WINDOW_MODE_FULLSCREEN \
+		if OS.get_name() == "Windows":
+			if now - asked_at >= WINDOW_RETRY_MS:
+				DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_MINIMIZED)
+				asked_at = now
+		elif mode == DisplayServer.WINDOW_MODE_FULLSCREEN \
 				or mode == DisplayServer.WINDOW_MODE_EXCLUSIVE_FULLSCREEN:
 			if now - asked_at >= EXIT_FULLSCREEN_RETRY_MS:
 				DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
@@ -183,7 +171,6 @@ func _hide_by_force() -> void:
 	DisplayServer.window_set_flag(DisplayServer.WINDOW_FLAG_NO_FOCUS, true)
 	var screen := DisplayServer.screen_get_size(DisplayServer.window_get_current_screen())
 	DisplayServer.window_set_position(Vector2i(screen.x + 64, 0))
-	_has_been_out_of_the_way = true
 
 
 ## The same "ask until it takes" shape in the other direction, and for the same
@@ -207,7 +194,7 @@ func _claim_the_screen(epoch: int) -> void:
 			return
 		var now := Time.get_ticks_msec()
 		if now - asked_at >= WINDOW_RETRY_MS:
-			if mode == DisplayServer.WINDOW_MODE_MINIMIZED:
+			if mode == DisplayServer.WINDOW_MODE_MINIMIZED and OS.get_name() != "Windows":
 				DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
 			else:
 				# FULLSCREEN, not EXCLUSIVE: on macOS the exclusive one is a
@@ -219,20 +206,6 @@ func _claim_the_screen(epoch: int) -> void:
 		await get_tree().process_frame
 
 
-## Somebody switched to our window. Tell the daemon and let it decide: if we're
-## warm it starts us, if we're paused it resumes us, otherwise nothing happens.
-##
-## The one thing filtered here, because only this process can tell the
-## difference: focus that arrives while we're *still opening*. A newly created
-## window is handed focus by the window server as a matter of course, and
-## reporting that would mean every warm game starts itself the moment it
-## launches — the opposite of warming.
+## OS focus never requests gameplay. Only Start/Resume messages can do that.
 func _on_focus_in() -> void:
-	if not _has_been_out_of_the_way:
-		return
-	var deadline := Time.get_ticks_msec() + FOCUS_SETTLE_MS
-	while Time.get_ticks_msec() < deadline:
-		if DisplayServer.window_get_mode() != DisplayServer.WINDOW_MODE_MINIMIZED:
-			GameNight.request_start()
-			return
-		await get_tree().process_frame
+	pass
