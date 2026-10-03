@@ -4,20 +4,17 @@ importer="scene"
 importer_version=1
 type="PackedScene"
 uid="uid://bp5r665k6qanc"
-path="res://.godot/imported/zombie.fbx-7358a6a0400bf043ae8e6e85128b7aa0.scn"
+valid=false
 
 [deps]
 
 source_file="res://assets/models/zombie.fbx"
-dest_files=["res://.godot/imported/zombie.fbx-7358a6a0400bf043ae8e6e85128b7aa0.scn"]
 
 [params]
 
 nodes/root_type=""
 nodes/root_name=""
 nodes/root_script=null
-mesh_library/use_node_names_as_mesh_names=false
-array_mesh/deduplicate_surfaces=true
 nodes/apply_root_scale=true
 nodes/root_scale=1.0
 nodes/import_as_skeleton_bones=false

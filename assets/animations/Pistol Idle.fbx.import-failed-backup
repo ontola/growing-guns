@@ -3,13 +3,12 @@
 importer="scene"
 importer_version=1
 type="PackedScene"
-uid="uid://m7lpk4irypf0"
-path="res://.godot/imported/Pistol Run.fbx-c9fa1c7d1e30554ec4f6e5d200dd2230.scn"
+uid="uid://ypoxqcx2frti"
+valid=false
 
 [deps]
 
-source_file="res://assets/animations/Pistol Run.fbx"
-dest_files=["res://.godot/imported/Pistol Run.fbx-c9fa1c7d1e30554ec4f6e5d200dd2230.scn"]
+source_file="res://assets/animations/Pistol Idle.fbx"
 
 [params]
 
