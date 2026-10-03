@@ -4,8 +4,15 @@ const SPECS := [
 	{"key":"rounds_to_win", "label":"Rounds to win (next match)", "kind":"number", "default":10, "min":1, "max":30},
 	{"key":"modifier_chance", "label":"Modifiers % (next round)", "kind":"number", "default":30, "min":0, "max":100},
 	{"key":"card_pick_seconds", "label":"Card time, s (next pick)", "kind":"number", "default":10, "min":3, "max":30},
+	{"key": "gravity", "label": "Gravity % (next round)", "kind": "number", "default": 100, "min": 25, "max": 175},
+	{"key": "bullet_drop", "label": "Bullet drop % (next round)", "kind": "number", "default": 100, "min": 0, "max": 200},
+	{"key": "body_damage", "label": "Body shot damage % (next round)", "kind": "number", "default": 100, "min": 50, "max": 200},
+	{"key": "pickup_rate", "label": "Random pickup rate % (next round)", "kind": "number", "default": 100, "min": 0, "max": 200},
 ]
-var _values: Dictionary = {"rounds_to_win":10, "modifier_chance":30, "card_pick_seconds":10}
+var _values: Dictionary = {}
+
+func _init() -> void:
+	for spec in SPECS: _values[spec.key] = spec.default
 
 func connect_host(host: Node) -> void:
 	host.setting_changed.connect(change)
@@ -15,9 +22,12 @@ func change(key: String, value: Variant) -> bool:
 	for spec: Dictionary in SPECS:
 		if spec.key != key:
 			continue
-		if typeof(value) != TYPE_INT or value < spec.min or value > spec.max:
+		if typeof(value) not in [TYPE_INT, TYPE_FLOAT]:
 			return false
-		_values[key] = value
+		if not is_finite(float(value)) or value != floor(float(value)) or value < spec.min or value > spec.max:
+			return false
+		_values[key] = int(value)
+		write_probe()
 		return true
 	return false
 
@@ -30,3 +40,18 @@ func modifier_chance() -> float:
 
 func card_pick_seconds() -> float:
 	return float(_values.card_pick_seconds)
+
+
+func round_rules() -> Dictionary:
+	return {"gravity": _values.gravity / 100.0, "bullet_drop": _values.bullet_drop / 100.0,
+		"body_damage": _values.body_damage / 100.0, "pickup_rate": _values.pickup_rate / 100.0}
+
+func apply_round(game: Node) -> void:
+	game._set_gamenight_rules.rpc(round_rules())
+
+
+func write_probe() -> void:
+	var path := OS.get_environment("GAMENIGHT_SETTINGS_PROBE")
+	if path.is_empty(): return
+	var file := FileAccess.open(path, FileAccess.WRITE)
+	if file: file.store_string(JSON.stringify({"settings": _values}))

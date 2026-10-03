@@ -272,6 +272,7 @@ var _tab_refresh_timer: float = 0.0
 var _explosion_flash_overlay: ColorRect = null
 var _arena_env: Environment = null
 var current_round_modifier: String = ""
+var gamenight_rules := preload("res://scripts/gamenight_rules.gd").new()
 # Dev override: when _force_round_modifier is true, every round uses
 # _forced_round_modifier instead of a random roll (set via the . dev menu).
 var _force_round_modifier: bool = false
@@ -986,6 +987,7 @@ func _request_spawn(pname: String) -> void:
 				existing.global_position, _is_bot_id(int(pid)), -1, false, existing.rotation.y,
 				int(_bot_appearance_seeds.get(pid, 0)))
 	_broadcast_scores.rpc(round_wins)
+	_set_gamenight_rules.rpc_id(sender, gamenight_rules.values)
 	_set_game_mode.rpc_id(sender, game_mode, coop_wave)
 	if is_coop_mode():
 		_set_coop_wave_progress.rpc_id(sender, _coop_wave_kills, _coop_wave_enemy_total)
@@ -2158,19 +2160,19 @@ func _open_gamenight_start_gate() -> void:
 	_maybe_start_match()
 
 func get_gravity_mult() -> float:
-	return ROUND_MODIFIERS_SCRIPT.gravity_mult(current_round_modifier)
+	return gamenight_rules.scale("gravity", ROUND_MODIFIERS_SCRIPT.gravity_mult(current_round_modifier))
 
 
 func get_bullet_drop_mult() -> float:
-	return ROUND_MODIFIERS_SCRIPT.bullet_drop_mult(current_round_modifier)
+	return gamenight_rules.scale("bullet_drop", ROUND_MODIFIERS_SCRIPT.bullet_drop_mult(current_round_modifier))
 
 
 func get_body_damage_mult() -> float:
-	return ROUND_MODIFIERS_SCRIPT.body_damage_mult(current_round_modifier)
+	return gamenight_rules.scale("body_damage", ROUND_MODIFIERS_SCRIPT.body_damage_mult(current_round_modifier))
 
 
 func get_pickup_spawn_mult() -> float:
-	return ROUND_MODIFIERS_SCRIPT.pickup_spawn_mult(current_round_modifier)
+	return gamenight_rules.scale("pickup_rate", ROUND_MODIFIERS_SCRIPT.pickup_spawn_mult(current_round_modifier))
 
 
 func _apply_gun_swap(round_players: Array[Node]) -> void:
@@ -2201,6 +2203,7 @@ func _gun_swap_permutation(n: int) -> Array[int]:
 func _start_round_now() -> void:
 	Trace.mark("_start_round_now (round %d)" % current_round)
 	Trace.span_begin("_start_round_now total")
+	if multiplayer.is_server() and GameNight.launched_by_daemon: GameNightBridge.settings.apply_round(self)
 	_reset_round_tracking()
 	if multiplayer.is_server() and is_coop_mode():
 		_clear_coop_enemies()
@@ -2847,11 +2850,12 @@ func _reset_round_tracking() -> void:
 	_reset_pickup_spawner()
 
 func _reset_pickup_spawner() -> void:
-	_pickup_spawn_timer = randf_range(10.0, 24.0)
+	_pickup_spawn_timer = randf_range(10.0, 24.0) / maxf(get_pickup_spawn_mult(), 0.1)
 
 func _update_pickup_spawner(delta: float) -> void:
 	if not multiplayer.is_server() or state != State.PLAYING:
 		return
+	if get_pickup_spawn_mult() <= 0.0: return
 	if get_tree().get_nodes_in_group("pickups").size() >= PICKUP_MAX_ACTIVE:
 		return
 	_pickup_spawn_timer -= delta
@@ -4390,6 +4394,11 @@ func _extend_match() -> void:
 	for pid in NetworkManager.players:
 		if pid != round_winner_id:
 			_begin_card_pick_for_loser(pid)
+
+@rpc("authority", "call_local", "reliable")
+func _set_gamenight_rules(values: Dictionary) -> void:
+	# Authority sends the same round snapshot to every peer.
+	gamenight_rules.apply(values)
 
 @rpc("authority", "call_local", "reliable")
 func _set_rounds_to_win(count: int) -> void:

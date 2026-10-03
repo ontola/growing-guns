@@ -15,7 +15,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix='growing-guns-settings-') as directory:
         root = Path(directory)
         (root / 'project.godot').write_text('config_version=5\n[application]\nconfig/name="Settings tests"\n')
-        for name in ['scripts/gamenight_settings.gd', 'scripts/round_modifiers.gd', 'scripts/weapon.gd', 'tests/gamenight_settings.gd']:
+        for name in ['scripts/gamenight_settings.gd', 'scripts/gamenight_rules.gd', 'scripts/round_modifiers.gd', 'scripts/weapon.gd', 'tests/gamenight_settings.gd']:
             target = root / name
             target.parent.mkdir(exist_ok=True)
             shutil.copyfile(ROOT / name, target)

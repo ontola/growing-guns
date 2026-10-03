@@ -1,5 +1,6 @@
 extends SceneTree
 const Settings = preload("res://scripts/gamenight_settings.gd")
+const Rules = preload("res://scripts/gamenight_rules.gd")
 const Modifiers = preload("res://scripts/round_modifiers.gd")
 class Host extends Node:
 	signal setting_changed(key: String, value: Variant)
@@ -7,6 +8,9 @@ class Host extends Node:
 	func declare_settings(value: Array) -> void: specs = value
 class Game extends Node:
 	var rounds_to_win := 10
+	var rules := {}
+	@rpc("authority", "call_local", "reliable")
+	func _set_gamenight_rules(value: Dictionary) -> void: rules = value
 	@rpc("authority", "call_local", "reliable")
 	func _set_rounds_to_win(value: int) -> void: rounds_to_win = value
 
@@ -18,7 +22,7 @@ func run() -> void:
 	var host = Host.new()
 	root.add_child(host)
 	settings.connect_host(host)
-	assert(host.specs.size() == 3)
+	assert(host.specs.size() == 7)
 	for spec in host.specs:
 		assert(settings.change(spec.key, spec.min))
 		assert(settings.change(spec.key, spec.max))
@@ -45,6 +49,28 @@ func run() -> void:
 		for i in 100:
 			var modifier = Modifiers.pick_for_round(settings.modifier_chance())
 			assert(modifier == "" if percent == 0 else modifier in Modifiers.IDS)
+	settings.apply_round(game)
+	assert(game.rules.gravity == 1.0 and game.rules.body_damage == 1.0)
+	host.setting_changed.emit("gravity", 50)
+	host.setting_changed.emit("body_damage", 150)
+	assert(game.rules.gravity == 1.0, "Current round keeps its snapshot")
+	settings.apply_round(game)
+	assert(game.rules.gravity == .5 and game.rules.body_damage == 1.5)
+	var snapshot = settings.round_rules()
+	snapshot.gravity = 99
+	assert(settings.round_rules().gravity == .5, "Callers cannot mutate preferences")
+	var rules = Rules.new()
+	assert(rules.apply(settings.round_rules()))
+	assert(rules.scale("gravity", 2.0) == 1.0, "Combines with a double-gravity modifier")
+	assert(rules.scale("body_damage", .5) == .75, "Preserves card/round modifier scaling")
+	assert(not rules.apply({"gravity": 0}), "Partial snapshots refused")
+	var invalid = settings.round_rules()
+	invalid.gravity = 99
+	assert(not rules.apply(invalid))
+	assert(rules.scale("gravity", 2.0) == 1.0)
+	settings.change("pickup_rate", 0)
+	assert(rules.apply(settings.round_rules()))
+	assert(rules.scale("pickup_rate", 2.0) == 0.0, "Can disable random pickup spawns")
 	seed(1234)
 	var modified = 0
 	for i in 1000:

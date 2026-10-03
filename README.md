@@ -27,3 +27,7 @@ The build is exported to `build/macos/MoreRounds.zip`. This archive contains the
 ## GameNight customization
 
 Parties can change rounds to win, round-modifier frequency and card-choice time. See [GameNight settings](docs/gamenight-settings.md) for ranges, timing and tests.
+
+## Assistant controls
+
+See [GameNight settings](docs/gamenight-settings.md) for all supported tweaks, their ranges and when they apply. The phone and lobby assistant discover these controls automatically from the running game.
