@@ -100,6 +100,12 @@ jobs:
           unzip -l build/windows/MoreRounds.zip | grep -F godot_iroh.dll
           ls -lh build/windows/MoreRounds.zip
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: growing-guns-windows
+          path: build/windows/MoreRounds.zip
+          if-no-files-found: error
+
       - name: Install butler
         run: |
           set -euxo pipefail
