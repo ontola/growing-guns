@@ -29,5 +29,5 @@ jobs:
           file: package/MoreRounds.zip
           platform: windows
           entrypoint: MoreRounds.exe
-          version: ci-${{ github.event.workflow_run.head_sha }}-${{ github.event.workflow_run.run_attempt }}
+          version: ci-${{ github.event.workflow_run.head_sha }}-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
           channel: preview
