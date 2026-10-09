@@ -10,6 +10,7 @@ const IROH_GAME_ID_MAX_LENGTH := 256
 static var retro_enabled: bool = false
 static var music_db: float = -16.0
 static var mouse_sens_mult: float = 1.0
+static var stick_sens_mult: float = 1.0
 static var movement_tilt_enabled: bool = true
 static var player_name: String = ""
 
@@ -136,6 +137,7 @@ static func load_settings() -> void:
 	var music_legacy_default: float = music_db if music_legacy else MUSIC_DB_MIN
 	music_db = float(cfg.get_value("audio", "music_db", music_legacy_default))
 	mouse_sens_mult = float(cfg.get_value("input", "mouse_sens_mult", 1.0))
+	stick_sens_mult = float(cfg.get_value("input", "stick_sens_mult", 1.0))
 	movement_tilt_enabled = cfg.get_value("input", "movement_tilt", true)
 	player_name = String(cfg.get_value("player", "name", ""))
 
@@ -144,6 +146,7 @@ static func save_settings() -> void:
 	cfg.set_value("video", "retro", retro_enabled)
 	cfg.set_value("audio", "music_db", music_db)
 	cfg.set_value("input", "mouse_sens_mult", mouse_sens_mult)
+	cfg.set_value("input", "stick_sens_mult", stick_sens_mult)
 	cfg.set_value("input", "movement_tilt", movement_tilt_enabled)
 	cfg.set_value("player", "name", player_name)
 	cfg.save(SETTINGS_PATH)
@@ -282,6 +285,20 @@ static func build_settings_panel(parent: Node, close_callback: Callable, left_al
 		mouse_sens_mult = v
 		if mouse_val_lbl:
 			mouse_val_lbl.text = "%.2fx" % v
+		save_settings()
+		if settings_changed_callback.is_valid():
+			settings_changed_callback.call()
+	)
+	
+	# Right-stick look sensitivity (all local pads)
+	var stick_row := build_slider_row("Stick sensitivity", stick_sens_mult, 0.3, 2.5, 0.05, "%.2fx" % stick_sens_mult)
+	vb.add_child(stick_row["row"])
+	var stick_slider: HSlider = stick_row["slider"]
+	var stick_val_lbl: Label = stick_row["value_label"]
+	stick_slider.value_changed.connect(func(v: float) -> void:
+		stick_sens_mult = v
+		if stick_val_lbl:
+			stick_val_lbl.text = "%.2fx" % v
 		save_settings()
 		if settings_changed_callback.is_valid():
 			settings_changed_callback.call()

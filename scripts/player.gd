@@ -26,7 +26,12 @@ const NINJA_MELEE_DAMAGE_MULT := 0.42
 const NINJA_MELEE_RANGE_MULT := 0.62
 const GRAVITY := 30.0
 const MOUSE_SENS := 0.0022
-const CONTROLLER_LOOK_SENS := 4.2
+# Max right-stick turn rate (rad/s) at full deflection. Was 4.2 (~240°/s),
+# which Joep found far too twitchy on a couch pad; ~150°/s matches typical
+# console shooters. The response curve below keeps small deflections slow so
+# fine aim stays possible; MenuHelpers.stick_sens_mult scales it per player.
+const CONTROLLER_LOOK_SENS := 2.6
+const CONTROLLER_LOOK_CURVE := 1.5
 const CONTROLLER_LOOK_DEADZONE := 0.18
 
 # --- First-person gun feel ---
@@ -1944,8 +1949,8 @@ func _apply_controller_look(delta: float) -> void:
 		)
 		if look_input.length() > CONTROLLER_LOOK_DEADZONE:
 			var look_mag := inverse_lerp(CONTROLLER_LOOK_DEADZONE, 1.0, minf(look_input.length(), 1.0))
-			var look_dir := look_input.normalized() * look_mag
-			var sens := CONTROLLER_LOOK_SENS
+			var look_dir := look_input.normalized() * pow(look_mag, CONTROLLER_LOOK_CURVE)
+			var sens := CONTROLLER_LOOK_SENS * MenuHelpers.stick_sens_mult
 			if is_zooming:
 				sens *= 0.4
 			rotate_y(-look_dir.x * sens * delta)
