@@ -49,7 +49,10 @@ func setup(game_node: Node, id: int, device: int = -1) -> void:
 	game = game_node
 	player_id = id
 	input_device = device
-	stretch = true
+	# Sized by hand (see _apply_render_size): stretch would size the
+	# SubViewport in canvas units, i.e. the 1281x720 design size, so the 3D
+	# world rendered at 720p even on a 4K TV.
+	stretch = false
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	if viewport == null:
 		_build()
@@ -337,8 +340,7 @@ func _fade_card_title_after_pick() -> void:
 
 
 func layout_for_size(view_size: Vector2) -> void:
-	if viewport and not stretch:
-		viewport.size = Vector2i(maxi(1, int(view_size.x)), maxi(1, int(view_size.y)))
+	_apply_render_size(view_size)
 	var scale: float = clampf(minf(view_size.x / 960.0, view_size.y / 540.0), 0.58, 1.0)
 	var margin := roundf(14.0 * scale)
 	var font_big := maxi(13, int(round(22.0 * scale)))
@@ -419,12 +421,43 @@ const CARD_SCALE_MIN := 0.7
 const CARD_SCALE_MAX := 1.5
 
 
+var _layout_size := Vector2.ZERO
+
+
+# Render the view at the window's real pixel count. The project stretches
+# canvas_items from a 1281x720 design size, so `view_size` is in design units;
+# the screen has `content_scale` times more pixels. The SubViewport gets the
+# full pixel size, its 2D (HUD, cards) keeps laying out in design units via
+# size_2d_override, and this container is scaled back down so the texture
+# lands on exactly view_size in the parent's canvas.
+func _apply_render_size(view_size: Vector2) -> void:
+	if viewport == null or view_size.x < 1.0 or view_size.y < 1.0:
+		return
+	_layout_size = view_size
+	var content_scale: Vector2 = get_viewport().get_final_transform().get_scale().max(Vector2.ONE)
+	viewport.size = Vector2i((view_size * content_scale).round()).max(Vector2i.ONE)
+	viewport.size_2d_override = Vector2i(view_size.round()).max(Vector2i.ONE)
+	viewport.size_2d_override_stretch = true
+	scale = Vector2.ONE / content_scale
+
+
+# The window can change size without the design-unit layout changing (a
+# GameNight game warms minimised and goes fullscreen at start), so follow the
+# real window too.
+func _on_window_size_changed() -> void:
+	if _layout_size != Vector2.ZERO:
+		_apply_render_size(_layout_size)
+
+
 func _build() -> void:
 	viewport = SubViewport.new()
 	viewport.disable_3d = false
 	viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 	viewport.world_3d = get_viewport().world_3d
+	viewport.add_to_group(&"player_views")
+	viewport.scaling_3d_scale = PerfGovernor.render_scale()
 	add_child(viewport)
+	get_viewport().size_changed.connect(_on_window_size_changed)
 
 	camera = Camera3D.new()
 	camera.current = true
@@ -571,12 +604,19 @@ func _build() -> void:
 	}
 
 
+# Whether this view's player is on a pad, so prompts name pad buttons. Under
+# GameNight the party plays on the couch even when no pad index is bound.
+func uses_controller() -> bool:
+	return input_device >= 0 or HUD_ICON_SCRIPT.use_controller_icons or GameNight.launched_by_daemon
+
+
 func show_pickup_toast(kind: String, subtitle_override: String = "") -> void:
 	var toast: Label = _hud.get("pickup_toast") as Label
 	if toast == null:
 		return
 	var info: Dictionary = PICKUP_ITEM_SCRIPT.display_info(kind)
 	var subtitle: String = subtitle_override if not subtitle_override.is_empty() else str(info.subtitle)
+	subtitle = HUD_ICON_SCRIPT.prompt_text(subtitle, uses_controller())
 	toast.text = info.title if subtitle.is_empty() else "%s\n%s" % [info.title, subtitle]
 	toast.add_theme_color_override("font_color", info.color)
 	toast.visible = true
@@ -824,7 +864,7 @@ func _make_card(card_id: String, card: Dictionary, index: int) -> Control:
 	root.set_meta("title_label", title)
 
 	var desc := _label(Color(0.9, 0.9, 0.9))
-	desc.text = str(card.get("desc", ""))
+	desc.text = HUD_ICON_SCRIPT.prompt_text(str(card.get("desc", "")), uses_controller())
 	desc.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	desc.add_theme_font_size_override("font_size", 14)

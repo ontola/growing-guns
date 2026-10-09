@@ -600,6 +600,10 @@ func _ensure_render_player(player_id: int, input_device: int = -1) -> RenderPlay
 	renderer.setup(self, player_id, input_device)
 	renderer.card_selected.connect(_on_render_player_card_selected)
 	_render_players[player_id] = renderer
+	# Every view is drawn by a RenderPlayer; the window's own 3D pass (the
+	# local player's camera is current there too) would only render the whole
+	# world a second time underneath them.
+	get_viewport().disable_3d = true
 	_update_render_player_layouts()
 	return renderer
 
@@ -612,6 +616,12 @@ func _remove_render_player(player_id: int) -> void:
 func _clear_render_players() -> void:
 	for id in _render_players.keys():
 		_remove_render_player(int(id))
+	get_viewport().disable_3d = false
+
+
+func _exit_tree() -> void:
+	# The window outlives this scene (menus draw 3D in it again).
+	get_viewport().disable_3d = false
 
 func _build_render_layer() -> void:
 	if _render_layer:

@@ -130,13 +130,17 @@ func _measure_cpu_gpu() -> void:
 		+ Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS)
 	) * 1000.0
 	_avg_cpu_ms = lerpf(_avg_cpu_ms, minf(cpu_ms, MAX_FRAME_MS), FRAME_EMA)
-	var rid := get_viewport().get_viewport_rid()
-	var gpu_ms := RenderingServer.viewport_get_measured_render_time_gpu(rid)
+	var gpu_ms := 0.0
+	var rcpu_ms := 0.0
+	for vp: Viewport in _rendering_viewports():
+		var rid := vp.get_viewport_rid()
+		RenderingServer.viewport_set_measure_render_time(rid, true)
+		gpu_ms += RenderingServer.viewport_get_measured_render_time_gpu(rid)
+		rcpu_ms += RenderingServer.viewport_get_measured_render_time_cpu(rid)
 	if gpu_ms > 0.01:
 		_gpu_time_supported = true
 	if _gpu_time_supported:
 		_avg_gpu_ms = lerpf(_avg_gpu_ms, minf(gpu_ms, MAX_FRAME_MS), FRAME_EMA)
-	var rcpu_ms := RenderingServer.viewport_get_measured_render_time_cpu(rid)
 	_avg_rcpu_ms = lerpf(_avg_rcpu_ms, minf(rcpu_ms, MAX_FRAME_MS), FRAME_EMA)
 
 
@@ -179,15 +183,26 @@ func _update_render_scale(fps: float, delta: float) -> void:
 	_rscale_cooldown = maxf(_rscale_cooldown - delta, 0.0)
 	if _rscale_cooldown > 0.0:
 		return
-	var vp := get_viewport()
 	if fps < RSCALE_ENGAGE_FPS and is_gpu_bound() and _rscale_idx < RENDER_SCALES.size() - 1:
 		_rscale_idx += 1
 	elif fps > RSCALE_RELEASE_FPS and _rscale_idx > 0:
 		_rscale_idx -= 1
 	else:
 		return
-	vp.scaling_3d_scale = RENDER_SCALES[_rscale_idx]
+	for vp: Viewport in _rendering_viewports():
+		vp.scaling_3d_scale = RENDER_SCALES[_rscale_idx]
 	_rscale_cooldown = RSCALE_DWELL_SEC
+
+
+# Where the 3D actually gets drawn: in a match that is each player's view
+# (RenderPlayer SubViewports), in the menus the window itself.
+func _rendering_viewports() -> Array[Viewport]:
+	var out: Array[Viewport] = []
+	for node in get_tree().get_nodes_in_group(&"player_views"):
+		out.append(node as Viewport)
+	if out.is_empty():
+		out.append(get_viewport())
+	return out
 
 
 # --- In-game bottleneck probe (GG_PERF_PROBE=1, debug diagnostics only) ----
