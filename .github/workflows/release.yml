@@ -34,6 +34,10 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The character models and animations are LFS objects; without them
+          # the export ships pointer files and no knights.
+          lfs: true
 
       # Install Godot headless binary.
       - name: Install Godot
@@ -88,11 +92,23 @@ jobs:
           godot --headless --path . --export-release "macOS LAN Debug" build/macos/MoreRounds.zip
           ls -lh build/macos/MoreRounds.zip
 
+      # The Windows preset bakes its shaders at export (shader_baker/enabled),
+      # so the first explosion of a session doesn't compile them mid-fight.
+      # Baking needs a real RenderingDevice, not --headless: software Vulkan
+      # (lavapipe) under a virtual display is enough.
+      - name: Install software Vulkan for the shader baker
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y mesa-vulkan-drivers xvfb
+
       - name: Build Windows
         run: |
           set -euxo pipefail
           mkdir -p build/windows
-          godot --headless --path . --export-release "Windows LAN" build/windows/MoreRounds.exe
+          xvfb-run -a godot --rendering-driver vulkan --path . --export-release "Windows LAN" build/windows/MoreRounds.exe
+          # Fail loudly if baking silently switched itself off.
+          test -n "$(find .godot/exported -path '*shader_baker/Windows/vulkan/*' -type f -print -quit)"
           test -f build/windows/godot_iroh.dll
           # Re-zip exe + pck + native GDExtension DLL. Without the DLL next to
           # the exe, Windows boots offline with "Iroh networking failed to load".

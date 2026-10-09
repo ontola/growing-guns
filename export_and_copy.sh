@@ -15,7 +15,7 @@ echo Exporting...
 mkdir C:\Users\Gebruiker\Downloads\growing-guns-export\build\windows 2>nul
 del C:\Users\Gebruiker\Downloads\growing-guns-export\build\windows\MoreRounds.exe 2>nul
 del C:\Users\Gebruiker\Downloads\growing-guns-export\build\windows\MoreRounds.pck 2>nul
-C:\Users\Gebruiker\Downloads\godot_bin\Godot_v4.6.2-stable_win64_console.exe --headless --path C:\Users\Gebruiker\Downloads\growing-guns-export --export-release "Windows LAN" C:\Users\Gebruiker\Downloads\growing-guns-export\build\windows\MoreRounds.exe 2>nul
+C:\Users\Gebruiker\Downloads\godot_bin\Godot_v4.6.2-stable_win64_console.exe --path C:\Users\Gebruiker\Downloads\growing-guns-export --export-release "Windows LAN" C:\Users\Gebruiker\Downloads\growing-guns-export\build\windows\MoreRounds.exe 2>nul
 echo Zipping...
 del C:\Users\Gebruiker\Downloads\growing-guns-export\build\windows\MoreRounds.zip 2>nul
 C:\Windows\System32\tar.exe -acf C:\Users\Gebruiker\Downloads\growing-guns-export\build\windows\MoreRounds.zip -C C:\Users\Gebruiker\Downloads\growing-guns-export\build\windows MoreRounds.exe MoreRounds.pck godot_iroh.dll

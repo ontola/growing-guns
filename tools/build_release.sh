@@ -120,7 +120,8 @@ build_win() {
 	fi
 	mkdir -p build/windows
 	rm -f build/windows/MoreRounds.exe build/windows/MoreRounds.pck build/windows/MoreRounds.zip
-	"$GODOT_BIN" --headless --path . --export-release "Windows LAN" build/windows/MoreRounds.exe
+	# Not --headless: the shader baker needs a real rendering device.
+	"$GODOT_BIN" --path . --export-release "Windows LAN" build/windows/MoreRounds.exe
 	# Zip exe + pck (and any DLLs Godot dropped) into one download.
 	(cd build/windows && zip -q -r MoreRounds.zip MoreRounds.exe MoreRounds.pck ./*.dll 2>/dev/null || \
 		zip -q -r MoreRounds.zip MoreRounds.exe MoreRounds.pck)
