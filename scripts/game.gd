@@ -4479,6 +4479,13 @@ func _build_pickup_toast() -> void:
 	_pickup_toast.add_theme_font_size_override("font_size", 30)
 	_pickup_toast.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.92))
 	_pickup_toast.add_theme_constant_override("outline_size", 6)
+	_pickup_toast.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	var toast_style := RenderPlayer._hud_plate_style(14)
+	toast_style.content_margin_left = 24.0
+	toast_style.content_margin_right = 24.0
+	toast_style.content_margin_top = 6.0
+	toast_style.content_margin_bottom = 8.0
+	_pickup_toast.add_theme_stylebox_override("normal", toast_style)
 	$HUD.add_child(_pickup_toast)
 
 	_pickup_toast_timer = Timer.new()

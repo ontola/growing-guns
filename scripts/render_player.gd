@@ -392,6 +392,16 @@ func layout_for_size(view_size: Vector2) -> void:
 		panel.offset_top = y - fisheye_y_offset
 		panel.offset_bottom = y + panel_h - fisheye_y_offset
 
+	if _hud_bar:
+		var bar_pad := 10.0 * scale
+		var bar_x := 290.0 * scale * (1.0 - fisheye_pull_x) + bar_pad
+		_hud_bar.anchor_left = 0.5
+		_hud_bar.anchor_right = 0.5
+		_hud_bar.offset_left = -bar_x
+		_hud_bar.offset_right = bar_x
+		_hud_bar.offset_top = y - fisheye_y_offset - bar_pad * 0.6
+		_hud_bar.offset_bottom = y + panel_h - fisheye_y_offset + bar_pad * 0.6
+
 	var revive_label: Label = _hud.get("revive_panel") as Label
 	if revive_label:
 		revive_label.add_theme_font_size_override("font_size", font_big)
@@ -422,6 +432,17 @@ const CARD_SCALE_MAX := 1.5
 
 
 var _layout_size := Vector2.ZERO
+var _hud_bar: Panel = null
+
+
+static func _hud_plate_style(radius: int) -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.04, 0.04, 0.06, 0.58)
+	style.border_color = Color(1.0, 1.0, 1.0, 0.10)
+	style.set_border_width_all(1)
+	style.set_corner_radius_all(radius)
+	style.anti_aliasing = true
+	return style
 
 
 # Render the view at the window's real pixel count. The project stretches
@@ -475,6 +496,14 @@ func _build() -> void:
 	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hud_layer.add_child(root)
 
+	# One shared backing plate under the bottom row, so the numbers read as a
+	# HUD instead of loose text floating over bright lava and sky.
+	_hud_bar = Panel.new()
+	_hud_bar.name = "HudBar"
+	_hud_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_hud_bar.z_index = 9
+	_hud_bar.add_theme_stylebox_override("panel", _hud_plate_style(10))
+	root.add_child(_hud_bar)
 	var hp_panel := _build_hp_panel()
 	root.add_child(hp_panel)
 	var ammo_panel := _build_value_panel(HUD_ICON_SCRIPT.Type.LMB, Color(1.0, 0.94, 0.62))
@@ -532,9 +561,16 @@ func _build() -> void:
 	pickup_toast.offset_bottom = 132.0
 	pickup_toast.offset_left = -180.0
 	pickup_toast.offset_right = 180.0
+	pickup_toast.grow_horizontal = Control.GROW_DIRECTION_BOTH
 	pickup_toast.add_theme_font_size_override("font_size", 22)
 	pickup_toast.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.92))
 	pickup_toast.add_theme_constant_override("outline_size", 5)
+	var toast_style := _hud_plate_style(12)
+	toast_style.content_margin_left = 18.0
+	toast_style.content_margin_right = 18.0
+	toast_style.content_margin_top = 4.0
+	toast_style.content_margin_bottom = 6.0
+	pickup_toast.add_theme_stylebox_override("normal", toast_style)
 	root.add_child(pickup_toast)
 
 	_pickup_toast_timer = Timer.new()
