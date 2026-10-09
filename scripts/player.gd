@@ -493,6 +493,10 @@ func _setup_third_person_gun() -> void:
 	else:
 		return
 
+	if character_visual and character_visual.is_active():
+		character_visual.set_identity_color(identity_color())
+		if name_label:
+			name_label.outline_modulate = identity_color().darkened(0.45)
 	_third_person_gun = gun_root
 	_third_person_gun_rest_pos = gun_root.position
 	_third_person_gun_rest_rot = gun_root.rotation
@@ -688,6 +692,26 @@ func _apply_identity_cosmetics() -> void:
 	if has_glasses:
 		_add_glasses()
 	_apply_mouth_variant(mouth_kind)
+
+# Eight hues far enough apart to tell across an arena, in seat order so the
+# first players in a match never share a colour.
+const IDENTITY_COLORS: Array[Color] = [
+	Color(0.95, 0.26, 0.21), Color(0.16, 0.55, 0.98), Color(1.0, 0.8, 0.1),
+	Color(0.2, 0.82, 0.35), Color(0.75, 0.3, 0.95), Color(1.0, 0.55, 0.12),
+	Color(0.1, 0.85, 0.85), Color(0.98, 0.4, 0.7),
+]
+
+## This player's colour: the same on every peer, because it comes from the
+## shared roster order rather than anything local.
+func identity_color() -> Color:
+	var game := get_tree().current_scene if is_inside_tree() else null
+	if is_bot and game and game.has_method("is_coop_mode") and game.is_coop_mode():
+		return _coop_identity_color(_identity_seed())
+	var ids: Array = NetworkManager.players.keys().map(func(k): return int(k))
+	if not ids.has(player_id):
+		ids.append(player_id)
+	ids.sort()
+	return IDENTITY_COLORS[ids.find(player_id) % IDENTITY_COLORS.size()]
 
 func _identity_seed() -> int:
 	if appearance_seed != 0:
@@ -958,9 +982,10 @@ func _update_blob_motion(delta: float) -> void:
 			var from_y := global_position.y + 0.7
 			var to_y := _bot_target.global_position.y + 0.4
 			var aim_h := global_position.distance_to(_bot_target.global_position)
-			look_pitch = -atan2(to_y - from_y, aim_h)
+			look_pitch = atan2(to_y - from_y, aim_h)
 		character_visual.rotation = Vector3.ZERO
-		character_visual.update_locomotion(speed, WALK_SPEED * weapon.move_speed_mult)
+		character_visual.update_locomotion_directional(
+			planar_velocity.rotated(Vector3.UP, -rotation.y), WALK_SPEED * weapon.move_speed_mult, delta)
 		return
 
 	if blob_rig:
@@ -1049,11 +1074,17 @@ func _update_third_person_aim_pitch(delta: float) -> void:
 	# rigs, and their third-person gun (seen by other views) must keep aiming.
 	if _third_person_gun == null or not _third_person_gun.visible:
 		return
+	var pitch := _aim_pitch()
+	if character_visual != null and character_visual.is_active():
+		# The rig aims itself: spine bend plus a pitched hand frame. The gun
+		# root stays at rest so the reload flourish owns its rotation.
+		character_visual.aim_pitch = lerp_angle(
+			character_visual.aim_pitch, pitch, clampf(delta * 12.0, 0.0, 1.0))
+		return
 	# The reload flourish tweens the SAME rotation property — fighting it
 	# every frame left the gun wedged between the two writers.
 	if _reload_tween and _reload_tween.is_valid() and _reload_tween.is_running():
 		return
-	var pitch := _aim_pitch()
 	var want_x := _third_person_gun_rest_rot.x + pitch
 	_third_person_gun.rotation.x = lerp_angle(
 		_third_person_gun.rotation.x, want_x, clampf(delta * 12.0, 0.0, 1.0))

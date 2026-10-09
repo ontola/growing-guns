@@ -31,10 +31,15 @@ const MODEL_ROTATION_DEGREES := Vector3(0.0, 180.0, 0.0)
 # Capsule bottom is y=-0.9; idle toe bones sit near y=0 in model space.
 # Third-person weapon mount — matches player.gd _setup_third_person_gun layering:
 # WeaponAnchor (offset) → ThirdPersonGun (aim pitch) → gun (offset + barrel align).
-const WEAPON_ROOT_ROTATION_DEGREES := Vector3(10.0, 0.0, 0.0)
-const WEAPON_MOUNT_POSITION := Vector3(-0.0942, 0.2227, 0.0858)
-const WEAPON_MOUNT_ROTATION_DEGREES := Vector3(89.46, -9.10, 0.00)
+# The WeaponAnchor is aligned with the BODY (x right, y up, -z forward), not
+# with the hand bone, so these read in plain body terms: the gun sits level,
+# magazine down, with its pistol grip in the palm. (The old hand-space Euler
+# mount rolled the rifle 180°, so every third-person gun was upside down.)
+const WEAPON_ROOT_ROTATION_DEGREES := Vector3.ZERO
+const WEAPON_MOUNT_POSITION := Vector3(0.0, 0.085, -0.143)
+const WEAPON_MOUNT_ROTATION_DEGREES := Vector3.ZERO
 const FOOT_OFFSET_Y := -0.9
+const LEG_TWIST_MAX := deg_to_rad(65.0)
 
 @export var foot_align_capsule: bool = true
 # -1 = derive from the owning player's player_id, so every peer independently
@@ -55,6 +60,19 @@ var _weapon_anchor: Node3D
 var _blob_rig: Node3D
 var _loco_blend: float = 0.0
 var _jump_active: bool = false
+var _aim_pose: AimPose = null
+var _leg_yaw: float = 0.0
+var _identity_color := Color(0, 0, 0, 0)  # alpha 0 = none
+var _crest: MeshInstance3D = null
+var _head_attach: BoneAttachment3D = null
+var _play_dir: float = 1.0
+## Vertical aim in radians, positive = looking up (same sign as the camera's
+## rotation.x). The spine bends toward it and the gun pitches with it.
+var aim_pitch: float = 0.0:
+	set(v):
+		aim_pitch = clampf(v, -1.4, 1.4)
+		if _aim_pose:
+			_aim_pose.pitch = aim_pitch
 
 
 func _ready() -> void:
@@ -104,6 +122,36 @@ func update_locomotion(planar_speed: float, reference_speed: float) -> void:
 	var ref := maxf(0.1, reference_speed)
 	var blend := clampf(planar_speed / ref, 0.0, 1.0)
 	set_locomotion_blend(blend)
+
+
+## Direction-aware locomotion. `local_velocity` is the planar velocity in the
+## player's own frame (-Z forward). The run clip only runs forward, so
+## sideways movement turns the legs toward the travel direction while the
+## spine keeps the chest and gun facing the aim, and backwards movement plays
+## the run in reverse instead of moonwalking.
+func update_locomotion_directional(local_velocity: Vector3, reference_speed: float, delta: float) -> void:
+	if not is_active() or _anim_tree == null:
+		return
+	var planar := Vector2(local_velocity.x, -local_velocity.z)
+	var speed := planar.length()
+	var ref := maxf(0.1, reference_speed)
+	set_locomotion_blend(clampf(speed / ref, 0.0, 1.0))
+	var want_yaw := 0.0
+	var want_dir := 1.0
+	if speed > 0.6:
+		var travel := planar / speed
+		want_dir = -1.0 if travel.y < -0.2 else 1.0
+		# Face the legs along the travel line, mirrored when backpedalling.
+		var leg := travel * want_dir
+		want_yaw = clampf(atan2(-leg.x, leg.y), -LEG_TWIST_MAX, LEG_TWIST_MAX)
+	var k := clampf(delta * 10.0, 0.0, 1.0)
+	_leg_yaw = lerpf(_leg_yaw, want_yaw, k)
+	_play_dir = lerpf(_play_dir, want_dir, clampf(delta * 14.0, 0.0, 1.0))
+	if _aim_pose:
+		_aim_pose.hips_yaw = _leg_yaw
+	# Cadence follows ground speed: a slowed player shouldn't sprint in place.
+	var cadence := clampf(speed / ref, 0.75, 1.5) if speed > 0.6 else 1.0
+	_anim_tree.set("parameters/speed/scale", _play_dir * cadence)
 
 
 func set_locomotion_blend(blend: float) -> void:
@@ -289,6 +337,9 @@ func _teardown() -> void:
 		_model = null
 	_skeleton = null
 	_weapon_anchor = null
+	_aim_pose = null
+	_crest = null
+	_head_attach = null
 
 
 func _derive_variant() -> int:
@@ -347,7 +398,17 @@ func _build() -> void:
 		return
 
 	_setup_anim_tree()
+	_anim_tree.set("parameters/speed/scale", 1.0)
+	_aim_pose = AimPose.new()
+	_aim_pose.body = self
+	_aim_pose.pitch = aim_pitch
+	_aim_pose.setup(_skeleton)
+	# Applied right after the clips write their pose (both the blend tree and
+	# the jump one-shot are mixers), so the layer never accumulates.
+	_anim_tree.mixer_applied.connect(_aim_pose.apply)
+	_anim_player.mixer_applied.connect(_aim_pose.apply)
 	_attach_weapon_anchor()
+	_apply_identity()
 	_warped_bones.clear()  # fresh skeleton — no stale indices
 	_apply_pending_bone_warps()
 
@@ -492,7 +553,10 @@ func _setup_anim_tree() -> void:
 	space.sync = true
 
 	tree.add_node("locomotion", space)
-	tree.connect_node(&"output", 0, &"locomotion")
+	var speed := AnimationNodeTimeScale.new()
+	tree.add_node("speed", speed)
+	tree.connect_node(&"speed", 0, &"locomotion")
+	tree.connect_node(&"output", 0, &"speed")
 
 	_anim_tree.active = true
 
@@ -553,7 +617,9 @@ func _attach_weapon_anchor() -> void:
 	attach.add_child(_hand_frame)
 	_weapon_anchor = Node3D.new()
 	_weapon_anchor.name = "WeaponAnchor"
-	_weapon_anchor.position = Vector3(0.0, 0.0, 0.08)
+	# Undo the hand reference so the anchor's axes are the body's (pitched by
+	# aim). Its origin stays on the hand bone.
+	_weapon_anchor.basis = REF_HAND_BASIS.inverse()
 	_hand_frame.add_child(_weapon_anchor)
 	# Update in lock-step with the skeleton so the gun never lags the hand.
 	_skeleton.skeleton_updated.connect(_update_hand_frame)
@@ -571,5 +637,121 @@ func _update_hand_frame() -> void:
 	var attach := _hand_frame.get_parent() as Node3D
 	var body: Basis = global_transform.basis
 	var s: float = pow(maxf(absf(body.determinant()), 0.000001), 1.0 / 3.0)
-	var rot: Basis = body.orthonormalized() * REF_HAND_BASIS
+	var rot: Basis = body.orthonormalized() * Basis(Vector3.RIGHT, aim_pitch) * REF_HAND_BASIS
 	_hand_frame.global_transform = Transform3D(rot * s, attach.global_position)
+	if _crest and is_instance_valid(_crest) and _head_attach:
+		# Same trick as the hand: ride the head bone, but stay in body axes
+		# so warped heads and odd bone rolls never tip the crest over.
+		var up: Vector3 = body.orthonormalized().y
+		var crest_basis: Basis = body.orthonormalized() * Basis(Vector3.RIGHT, aim_pitch * 0.5)
+		_crest.global_transform = Transform3D(crest_basis * s, _head_attach.global_position + up * CREST_HEIGHT * s)
+
+
+# Procedural upper-body layer on top of the clips: bends the spine toward the
+# aim pitch (so the arms, and the gun in them, follow where the player looks)
+# and twists the pelvis toward the travel direction for strafing while the
+# spine untwists so the chest keeps facing the aim. Runs after each mixer
+# pass, on bones the clips animate every frame, so nothing accumulates.
+# (A SkeletonModifier3D would be the textbook tool, but with more than one
+# rig on screen it blanked the whole frame under directional shadows.)
+class AimPose extends RefCounted:
+	## Share of the aim pitch taken by the spine. The rest is carried by the
+	## gun's own pitch at the hand, so the bend never folds the torso in half.
+	const SPINE_PITCH_SHARE := 0.75
+	var pitch: float = 0.0
+	var hips_yaw: float = 0.0
+	var body: Node3D
+	var _skel: Skeleton3D
+	var _pelvis := -1
+	var _spine: PackedInt32Array = []
+
+	func setup(skel: Skeleton3D) -> void:
+		_skel = skel
+		# The knight animates a "root" bone above Hips (Hips itself has no
+		# track); the other rigs animate Hips. Twist whichever one moves.
+		var hips := CharacterVisual.find_bone_any(skel, "Hips")
+		var parent := skel.get_bone_parent(hips) if hips >= 0 else -1
+		_pelvis = parent if parent >= 0 and skel.get_bone_name(parent) == "root" else hips
+		for b in ["Spine", "Spine1", "Spine2"]:
+			var i := CharacterVisual.find_bone_any(skel, b)
+			if i >= 0:
+				_spine.append(i)
+
+	func apply() -> void:
+		if _skel == null or not is_instance_valid(_skel) or body == null or _spine.is_empty():
+			return
+		if is_zero_approx(pitch) and is_zero_approx(hips_yaw):
+			return
+		var to_skel := _skel.global_transform.basis.orthonormalized().inverse()
+		var right := (to_skel * body.global_transform.basis.x).normalized()
+		var up := (to_skel * body.global_transform.basis.y).normalized()
+		if _pelvis >= 0 and not is_zero_approx(hips_yaw):
+			_rotate_bone(_pelvis, up, hips_yaw)
+		var n := float(_spine.size())
+		for i in _spine:
+			if not is_zero_approx(hips_yaw):
+				_rotate_bone(i, up, -hips_yaw / n)
+			# A positive turn about the body's right axis leans the chest back,
+			# which is what looking up is.
+			_rotate_bone(i, right, pitch * SPINE_PITCH_SHARE / n)
+
+	# Rotate bone `idx` by `angle` about `axis` given in skeleton space.
+	func _rotate_bone(idx: int, axis: Vector3, angle: float) -> void:
+		var parent := _skel.get_bone_parent(idx)
+		var parent_basis := _skel.get_bone_global_pose(parent).basis.orthonormalized() if parent >= 0 else Basis.IDENTITY
+		var local_axis := (parent_basis.inverse() * axis).normalized()
+		_skel.set_bone_pose_rotation(idx, Quaternion(local_axis, angle) * _skel.get_bone_pose_rotation(idx))
+
+
+## Per-player colour so players can tell each other apart at a glance, also
+## when two of them drew the same model: the outfit takes a tint of it and a
+## bright crest in that colour rides on top of the head.
+const CREST_HEIGHT := 0.24
+const OUTFIT_TINT := 0.38
+
+func set_identity_color(c: Color) -> void:
+	_identity_color = c
+	if ready_ok:
+		_apply_identity()
+
+
+func _apply_identity() -> void:
+	if _model == null or _skeleton == null or _identity_color.a <= 0.0:
+		return
+	var meshes: Array[MeshInstance3D] = []
+	Violence.collect_meshes(_model, meshes)
+	var tint := Color.WHITE.lerp(_identity_color, OUTFIT_TINT)
+	for mi in meshes:
+		if mi.mesh == null:
+			continue
+		for i in mi.mesh.get_surface_count():
+			var src := mi.mesh.surface_get_material(i) as BaseMaterial3D
+			if src == null:
+				continue
+			# Duplicate: every player shares the FBX's materials.
+			var mat := src.duplicate() as BaseMaterial3D
+			mat.albedo_color = src.albedo_color * tint
+			mi.set_surface_override_material(i, mat)
+	if _crest == null:
+		var head := find_bone_any(_skeleton, "Head")
+		if head < 0:
+			return
+		_head_attach = BoneAttachment3D.new()
+		_head_attach.name = "HeadAttachment"
+		_head_attach.bone_name = _skeleton.get_bone_name(head)
+		_skeleton.add_child(_head_attach)
+		_crest = MeshInstance3D.new()
+		_crest.name = "IdentityCrest"
+		_crest.top_level = true
+		_crest.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		var box := BoxMesh.new()
+		box.size = Vector3(0.05, 0.1, 0.3)
+		_crest.mesh = box
+		_head_attach.add_child(_crest)
+	var crest_mat := StandardMaterial3D.new()
+	crest_mat.albedo_color = _identity_color
+	crest_mat.emission_enabled = true
+	crest_mat.emission = _identity_color
+	crest_mat.emission_energy_multiplier = 0.6
+	crest_mat.roughness = 0.6
+	_crest.material_override = crest_mat
