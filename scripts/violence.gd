@@ -3636,6 +3636,8 @@ static func _create_laser_tracer_material(alpha: float) -> ShaderMaterial:
 	return mat
 
 
+static var _laser_light_frame := -1
+
 static func spawn_laser_tracer(scene: Node, from: Vector3, to: Vector3, alpha: float = 1.0) -> void:
 	if scene == null:
 		return
@@ -3661,8 +3663,12 @@ static func spawn_laser_tracer(scene: Node, from: Vector3, to: Vector3, alpha: f
 	else:
 		line.look_at(to, Vector3.UP)
 
+	# One flash light per frame: a laser trigger fires ten beams at once, and
+	# ten stacked 10-energy lights at the muzzle white out the whole view.
 	var light: OmniLight3D = null
-	if alpha >= 1.0:
+	var frame := Engine.get_process_frames()
+	if alpha >= 1.0 and frame != _laser_light_frame:
+		_laser_light_frame = frame
 		light = OmniLight3D.new()
 		light.light_color = Color(1.0, 0.95, 0.85)
 		light.light_energy = 10.0
