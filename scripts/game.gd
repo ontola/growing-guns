@@ -2038,9 +2038,11 @@ func _update_ping_monitor(delta: float) -> void:
 func _send_ping_probes() -> void:
 	var now := Time.get_ticks_msec()
 	_ping_ms_by_player[1] = 0
+	var peers := multiplayer.get_peers()
 	for raw_id in NetworkManager.players:
 		var peer_id := int(raw_id)
-		if peer_id == 1 or _is_bot_id(peer_id):
+		# Bots and splitscreen guests share the host's process: no peer to ping.
+		if peer_id == 1 or not peers.has(peer_id):
 			continue
 		_ping_seq += 1
 		_ping_pending[_ping_seq] = {"peer": peer_id, "sent_ms": now}

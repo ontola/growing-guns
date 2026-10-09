@@ -20,11 +20,16 @@ var _pause_buttons: Array[Button] = []
 var _primary_device: int = -1
 var _players_by_device: Dictionary = {}
 var _renderers_by_player: Dictionary = {}
-# Single AudioListener3D parked at the midpoint of all local players' cameras.
-# Each SubViewport has its own current Camera3D (for rendering), but the main
-# viewport ends up with no current camera in splitscreen mode — without this
-# listener, AudioStreamPlayer3D nodes have no reference point and play flat.
+# Single AudioListener3D parked at the host's camera. Each SubViewport has its
+# own current Camera3D (for rendering), but the main viewport ends up with no
+# current camera in splitscreen mode.
 var _audio_listener: AudioListener3D = null
+# A listener alone is not enough: AudioStreamPlayer3D only mixes for viewports
+# that have a current Camera3D, and only the main viewport listens. Without
+# this camera every 3D sound (guns, explosions) is silent in splitscreen while
+# 2D audio (music, crowd) still plays. The main viewport's 3D pass is disabled
+# while splitscreen is on, so the camera renders nothing.
+var _audio_camera: Camera3D = null
 
 
 func setup(game: Node) -> void:
@@ -67,6 +72,10 @@ func disable() -> void:
 	if _audio_listener and is_instance_valid(_audio_listener):
 		_audio_listener.queue_free()
 	_audio_listener = null
+	if _audio_camera and is_instance_valid(_audio_camera):
+		_audio_camera.queue_free()
+	_audio_camera = null
+	get_viewport().disable_3d = false
 	if _layer and is_instance_valid(_layer):
 		_layer.queue_free()
 	_layer = null
@@ -333,6 +342,11 @@ func _setup_audio_listener() -> void:
 	_audio_listener.name = "SplitscreenAudioListener"
 	_game.add_child(_audio_listener)
 	_audio_listener.make_current()
+	_audio_camera = Camera3D.new()
+	_audio_camera.name = "SplitscreenAudioCamera"
+	_game.add_child(_audio_camera)
+	_audio_camera.make_current()
+	get_viewport().disable_3d = true
 
 
 func _update_audio_listener() -> void:
@@ -347,6 +361,10 @@ func _update_audio_listener() -> void:
 	if cam == null:
 		return
 	_audio_listener.global_transform = cam.global_transform
+	if _audio_camera and is_instance_valid(_audio_camera):
+		_audio_camera.global_transform = cam.global_transform
+		if not _audio_camera.current:
+			_audio_camera.make_current()
 
 
 func _host_primary_camera() -> Camera3D:
