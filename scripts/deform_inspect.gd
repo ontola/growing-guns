@@ -11,6 +11,7 @@ const ArenaGenerator := preload("res://scripts/arena_generator.gd")
 const BRICK := 2.0
 const SPACING := 3.0
 const NUM_CASES := 5
+const RES := 384  # damage texture size, matches Splat2D.res
 
 var _cam: Camera3D
 
