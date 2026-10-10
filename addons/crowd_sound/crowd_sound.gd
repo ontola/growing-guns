@@ -1,7 +1,10 @@
 extends Node
 
-# Procedural crowd sound. No samples on disk: every loop and reaction is
-# synthesized at boot, chunked across frames. Started in Growing Guns; any
+# Crowd sound. The voiced parts (cheer and panic beds, roars, goal eruptions,
+# "ooh"s, screams, chants) play short CC0 stadium recordings from samples/
+# (sources in samples/CREDITS.md); the murmur and applause are synthesized at
+# boot, chunked across frames. Set `use_samples = false` before adding the node
+# for the fully procedural crowd. Started in Growing Guns; any
 # Godot game with an audience can use it. Games keep their own copy of this
 # addon in sync with joepio/godot-crowd-sound (sync.py).
 #
@@ -31,7 +34,8 @@ extends Node
 #   _chant_position() — where a chant comes from (Vector3.INF = 2D).
 #   _suppressed()     — true mutes all reactions (benchmarks, menus).
 #
-# Perf: all synthesis is boot-time. Per frame the node costs a few float ops.
+# Perf: samples are streamed OGG; synthesis is boot-time. Per frame the node
+# costs a few float ops.
 
 signal synth_ready
 
@@ -46,6 +50,9 @@ var cheer_db: float = -10.0
 var panic_db: float = -9.0
 var reaction_db: float = -8.0
 var chant_db: float = -10.0
+# Real recordings for the voiced layers (see the header). Read once in _ready.
+var use_samples: bool = true
+const SAMPLE_DIR := "res://addons/crowd_sound/samples/"
 # Clap voicing — read at BAKE time by _synth_cheer; changing these at
 # runtime needs a cheer-loop rebake (Growing Guns' crowd_lab has a button).
 # The gains are RELATIVE TO THE ROAR'S MEASURED RMS (1.0 = as loud as the
@@ -101,6 +108,12 @@ var _roar_wav: AudioStreamWAV = null
 var _surge_wav: AudioStreamWAV = null  # kick-off anticipation swell
 var _ooh_wav: AudioStreamWAV = null
 var _scream_wav: AudioStreamWAV = null
+# Recorded variants; when filled they replace the synthesized one-shot above.
+var _roar_samples: Array[AudioStream] = []
+var _goal_samples: Array[AudioStream] = []
+var _ooh_samples: Array[AudioStream] = []
+var _scream_samples: Array[AudioStream] = []
+var _surge_sample: AudioStream = null
 var _roar_cd: float = 0.0
 var _ooh_cd: float = 0.0
 var _scream_cd: float = 0.0
@@ -112,7 +125,7 @@ var _celebrate_hold: float = 0.0
 # procedurally composed at boot (5 melodies, 3 reps baked per WAV). One
 # plays at a time when enthusiasm is high; panic fades it out mid-song.
 const CHANT_COUNT := 5
-var _chant_wavs: Array[AudioStreamWAV] = []
+var _chant_wavs: Array[AudioStream] = []
 var _chant_player_3d: AudioStreamPlayer3D = null
 var _chant_player_2d: AudioStreamPlayer = null
 # Whichever of the two the current/last chant used.
@@ -215,9 +228,10 @@ func kickoff() -> void:
 	# Pre-lift the cheer bed so the swell hands off into an already-roaring
 	# crowd instead of tailing into a dip.
 	_cheer_gain = maxf(_cheer_gain, 0.6)
-	if _surge_wav != null:
+	var surge: AudioStream = _surge_sample if _surge_sample != null else _surge_wav
+	if surge != null:
 		_roar_cd = 2.0
-		_play_oneshot(_surge_wav, reaction_db, Vector3.INF,
+		_play_oneshot(surge, reaction_db, Vector3.INF,
 			randf_range(0.96, 1.02), "crowd_roar", 100.0, -1.0, true)
 
 
@@ -237,6 +251,11 @@ func celebrate(hold: float = 4.0, chant: bool = true) -> void:
 		_chant_force_delay = 1.8
 	# SPL 135: a stadium eruption really is that loud, and it has to clear an
 	# HDR mixer's cull window even right after a huge explosion.
+	if not _goal_samples.is_empty():
+		# A recorded goal eruption already carries its own build and tail.
+		_play_oneshot(_goal_samples.pick_random(), reaction_db + 4.0, Vector3.INF,
+			randf_range(0.97, 1.03), "crowd_roar", 135.0, -1.0, true)
+		return
 	if _roar_wav != null:
 		_play_oneshot(_roar_wav, reaction_db + 4.0, Vector3.INF,
 			randf_range(0.96, 1.02), "crowd_roar", 135.0, -1.0, true)
@@ -251,9 +270,10 @@ func hit(amount: float = 0.18, ooh_chance: float = 0.4) -> void:
 	if not active or _suppressed():
 		return
 	enthusiasm = clampf(enthusiasm + amount, 0.0, 1.0)
-	if _ooh_cd <= 0.0 and _ooh_wav != null and randf() < ooh_chance:
+	var ooh := _pick(_ooh_samples, _ooh_wav)
+	if _ooh_cd <= 0.0 and ooh != null and randf() < ooh_chance:
 		_ooh_cd = 1.6
-		_play_oneshot(_ooh_wav, reaction_db - 6.0 + enthusiasm * 3.0, Vector3.INF,
+		_play_oneshot(ooh, reaction_db - 6.0 + enthusiasm * 3.0, Vector3.INF,
 			randf_range(0.92, 1.1), "crowd_ooh", 88.0, -1.0, false)
 
 
@@ -263,9 +283,10 @@ func roar(amount: float = 0.6) -> void:
 	if not active or _suppressed():
 		return
 	enthusiasm = clampf(enthusiasm + amount, 0.0, 1.0)
-	if _roar_cd <= 0.0 and _roar_wav != null:
+	var shot := _pick(_roar_samples, _roar_wav)
+	if _roar_cd <= 0.0 and shot != null:
 		_roar_cd = 1.4
-		_play_oneshot(_roar_wav, reaction_db + enthusiasm * 3.0, Vector3.INF,
+		_play_oneshot(shot, reaction_db + enthusiasm * 3.0, Vector3.INF,
 			randf_range(0.94, 1.06), "crowd_roar", 102.0, -1.0, true)
 
 
@@ -289,10 +310,11 @@ func scare(amount: float, at: Vector3 = Vector3.INF, intensity: float = 0.55,
 
 
 func scream(at: Vector3, intensity: float) -> void:
-	if _scream_cd > 0.0 or _scream_wav == null:
+	var shot := _pick(_scream_samples, _scream_wav)
+	if _scream_cd > 0.0 or shot == null:
 		return
 	_scream_cd = 0.55
-	_play_oneshot(_scream_wav, reaction_db - 4.0 + intensity * 5.0, at,
+	_play_oneshot(shot, reaction_db - 4.0 + intensity * 5.0, at,
 		randf_range(0.9, 1.15), "crowd_scream", 96.0 + intensity * 8.0, 35.0, true)
 
 
@@ -424,6 +446,11 @@ func _start_chant() -> void:
 	_chant_cd = 999.0  # re-armed by finished / fade-out
 
 
+# A random recorded variant, or the synthesized fallback when there are none.
+func _pick(samples: Array[AudioStream], synth: AudioStream) -> AudioStream:
+	return synth if samples.is_empty() else samples.pick_random()
+
+
 func _apply_gain(p: AudioStreamPlayer, gain: float, base_db: float) -> void:
 	if p == null or p.stream == null:
 		return
@@ -438,16 +465,23 @@ func _apply_gain(p: AudioStreamPlayer, gain: float, base_db: float) -> void:
 # no single frame eats a full loop's worth of synth.
 
 func _synth_all() -> void:
+	var recorded := use_samples and _load_samples()
 	var murmur := await _synth_murmur(LOOP_SECONDS + SEAM_SECONDS)
 	_murmur_player.stream = _to_wav(_finish_loop(murmur), true)
 	_murmur_player.play()
-	var cheer := await _synth_cheer(LOOP_SECONDS + SEAM_SECONDS, true, 0.0, true)
-	_cheer_player.stream = _to_wav(_finish_loop(cheer), true)
+	if not recorded:
+		var cheer := await _synth_cheer(LOOP_SECONDS + SEAM_SECONDS, true, 0.0, true)
+		_cheer_player.stream = _to_wav(_finish_loop(cheer), true)
 	_cheer_player.play()
 	_split_claps = PackedVector2Array()
 	var applause := await _synth_applause(LOOP_SECONDS + SEAM_SECONDS)
 	_clap_player.stream = _to_wav(_finish_loop(applause), true)
 	_clap_player.play()
+	if recorded:
+		_panic_player.play()
+		_synth_done = true
+		synth_ready.emit()
+		return
 	var panic := await _synth_panic(LOOP_SECONDS + SEAM_SECONDS, true, 0.0)
 	_panic_player.stream = _to_wav(_finish_loop(panic), true)
 	_panic_player.play()
@@ -478,6 +512,51 @@ func _slice() -> void:
 	if Time.get_ticks_usec() - _slice_start > SLICE_USEC:
 		await get_tree().process_frame
 		_slice_start = Time.get_ticks_usec()
+
+
+# Loads the recorded layers. False (and nothing changed) when the set is
+# incomplete, e.g. a game that vendored the script without samples/.
+func _load_samples() -> bool:
+	var cheer := _load_sample("cheer_loop")
+	var panic := _load_sample("panic_loop")
+	var surge := _load_sample("surge")
+	var sets := {"roar": [], "goal": [], "ooh": [], "scream": [], "chant": []}
+	for prefix in sets:
+		for i in range(1, 10):
+			var s := _load_sample("%s_%d" % [prefix, i])
+			if s == null:
+				break
+			sets[prefix].append(s)
+	if cheer == null or panic == null or surge == null:
+		return false
+	for prefix in sets:
+		if sets[prefix].is_empty():
+			return false
+	_set_loop(cheer)
+	_set_loop(panic)
+	_cheer_player.stream = cheer
+	_panic_player.stream = panic
+	_surge_sample = surge
+	_roar_samples.assign(sets["roar"])
+	_goal_samples.assign(sets["goal"])
+	_ooh_samples.assign(sets["ooh"])
+	_scream_samples.assign(sets["scream"])
+	_chant_wavs.assign(sets["chant"])
+	return true
+
+
+func _load_sample(sample_name: String) -> AudioStream:
+	var path := SAMPLE_DIR + sample_name + ".ogg"
+	if not ResourceLoader.exists(path):
+		return null
+	return load(path) as AudioStream
+
+
+func _set_loop(stream: AudioStream) -> void:
+	if stream is AudioStreamOggVorbis:
+		stream.loop = true
+	elif stream is AudioStreamWAV:
+		stream.loop_mode = AudioStreamWAV.LOOP_FORWARD
 
 
 func _finish_loop(buf: PackedVector2Array) -> PackedVector2Array:
