@@ -444,8 +444,9 @@ func _synth_all() -> void:
 	var cheer := await _synth_cheer(LOOP_SECONDS + SEAM_SECONDS, true, 0.0, true)
 	_cheer_player.stream = _to_wav(_finish_loop(cheer), true)
 	_cheer_player.play()
-	_clap_player.stream = _to_wav(_finish_loop(_split_claps), true)
 	_split_claps = PackedVector2Array()
+	var applause := await _synth_applause(LOOP_SECONDS + SEAM_SECONDS)
+	_clap_player.stream = _to_wav(_finish_loop(applause), true)
 	_clap_player.play()
 	var panic := await _synth_panic(LOOP_SECONDS + SEAM_SECONDS, true, 0.0)
 	_panic_player.stream = _to_wav(_finish_loop(panic), true)
@@ -464,6 +465,19 @@ func _synth_all() -> void:
 		_chant_wavs.append(_to_wav(_normalize(chant, 0.6), false))
 	_synth_done = true
 	synth_ready.emit()
+
+
+# Time-sliced baking: yield to the next frame only once this frame has spent
+# SLICE_USEC on synthesis, so fast machines finish in far fewer frames while
+# no frame pays more than about that budget.
+const SLICE_USEC := 2500
+var _slice_start: int = 0
+
+
+func _slice() -> void:
+	if Time.get_ticks_usec() - _slice_start > SLICE_USEC:
+		await get_tree().process_frame
+		_slice_start = Time.get_ticks_usec()
 
 
 func _finish_loop(buf: PackedVector2Array) -> PackedVector2Array:
@@ -508,38 +522,377 @@ func _to_wav(buf: PackedVector2Array, looped: bool) -> AudioStreamWAV:
 	return wav
 
 
-# Idle "walla": double one-pole lowpassed noise (≈ distant voice mush) with
-# an independent ~4 Hz syllabic amplitude walk per channel and a slow swell.
+# Idle crowd murmur: a small crowd of synthesized talkers. Each talker is a
+# glottal pulse train (jittered, gliding intonation, phrase declination)
+# through three time-varying vowel formants, with fricative/plosive noise
+# for consonants and pauses between phrases. A few talkers sit close; the
+# rest are lowpassed and quieter, then the whole bed goes through a small
+# stadium reverb. Parameters were tuned with an AudioSet tagger as judge,
+# maximizing similarity to real multi-talker babble (0.47 for the old
+# noise-based walla, 0.86 for this, real babble scores 0.88).
+# 6 synthesized talkers, each heard 3 times (resampled ±10%, shifted, panned
+# apart) = 18 voices for the price of 6; the judge scores it the same as 16
+# unique talkers.
+const MURMUR_TALKERS := 6
+const MURMUR_COPIES := 3
+const MURMUR_NEAR := 3
+# Vowel formants F1..F3 (adult average).
+const VOWELS := [
+	Vector3(750, 1220, 2600), Vector3(480, 1900, 2550), Vector3(300, 2250, 2950),
+	Vector3(480, 880, 2550), Vector3(330, 900, 2350), Vector3(650, 1700, 2500),
+	Vector3(600, 1150, 2450)]
+# Talker voicing (from the search; see joepio/godot-crowd-sound tools).
+var talk_f0_male: float = 114.0
+var talk_f0_female: float = 210.0
+var talk_phrase: float = 1.03     # max phrase length (s)
+var talk_decl: float = 0.245      # pitch declination over a phrase
+var talk_vowel: float = 0.112     # mean vowel length (s)
+var talk_intonation: float = 0.164
+var talk_env_pow: float = 0.914
+var talk_pause: float = 0.228     # mean pause between phrases (s)
+var talk_glide: float = 3.57      # pitch smoothing (Hz)
+var talk_jitter: float = 0.021
+var talk_open_q: float = 0.464    # glottal open quotient
+var talk_tilt: float = 892.0      # source lowpass (Hz)
+var talk_breath: float = 0.178
+var talk_bw: float = 139.0        # F1 bandwidth (Hz)
+var talk_fric: float = 0.022
+var murmur_far_lp: float = 800.0
+var murmur_far_gain: float = 0.247
+var murmur_wet: float = 0.36
+var murmur_seed: int = 1  # best of 8 seeds by the judge
+
+
 func _synth_murmur(seconds: float) -> PackedVector2Array:
 	var n := int(seconds * RATE)
 	var out := PackedVector2Array()
 	out.resize(n)
 	var rng := RandomNumberGenerator.new()
-	rng.seed = 51001
-	var lp := Vector2.ZERO
-	var lp2 := Vector2.ZERO
-	var syl := Vector2(0.5, 0.5)
-	var syl_target := Vector2(rng.randf(), rng.randf())
-	var ph := rng.randf() * TAU
+	rng.seed = murmur_seed
+	for k in MURMUR_TALKERS:
+		var voice := await _synth_talker(n, rng)
+		for copy in MURMUR_COPIES:
+			var near := copy == 0 and k < MURMUR_NEAR
+			var g := rng.randf_range(0.6, 1.0) if near else rng.randf_range(0.15, 0.5) * murmur_far_gain
+			var pan := rng.randf()
+			var gl := g * sqrt(1.0 - pan)
+			var gr := g * sqrt(pan)
+			var a := exp(-TAU * murmur_far_lp * rng.randf_range(0.7, 1.3) / RATE)
+			var rate := 1.0 if copy == 0 else rng.randf_range(0.9, 1.12)
+			var pos := 0.0 if copy == 0 else rng.randf() * n
+			var lp := 0.0
+			for i in n:
+				var s: float
+				if copy == 0:
+					s = voice[i]
+				else:
+					var j := int(pos)
+					var fr := pos - j
+					s = voice[j] + (voice[(j + 1) % n] - voice[j]) * fr
+					pos += rate
+					if pos >= n:
+						pos -= n
+				if not near:
+					lp = s + (lp - s) * a
+					s = lp
+				out[i] += Vector2(s * gl, s * gr)
+			await _slice()
+	return await _reverb(out, murmur_wet, 0.88)
+
+
+# One talker, `n` samples, mono. Syllables are planned first, then rendered
+# sample by sample with formant coefficients refreshed every 64 samples.
+func _synth_talker(n: int, rng: RandomNumberGenerator) -> PackedFloat32Array:
+	var f0 := rng.randf_range(talk_f0_male * 0.8, talk_f0_male * 1.25) if rng.randf() < 0.5 \
+		else rng.randf_range(talk_f0_female * 0.85, talk_f0_female * 1.2)
+	var fscale := 1.0 if f0 < 160.0 else 1.15
+	# Syllable plan: start, consonant end, end (samples), pitch, target vowel, kind.
+	var plan: Array = []
+	var t := 0
+	var cur := Vector3(600, 1150, 2450) * fscale
+	while t < n:
+		var phrase := int(rng.randf_range(0.6, talk_phrase) * RATE)
+		var p0 := t
+		var p_end := mini(n, t + phrase)
+		while t < p_end:
+			var cl := int(rng.randf_range(0.02, 0.06) * RATE)
+			var vl := int(rng.randf_range(0.5, 1.5) * talk_vowel * RATE)
+			var length := mini(cl + vl, n - t)
+			if length <= 0:
+				break
+			var prog := float(t - p0) / float(phrase)
+			var pitch := f0 * (1.0 + talk_decl - talk_decl * 1.3 * prog) \
+				* (1.0 + rng.randf_range(-talk_intonation, talk_intonation))
+			var tgt: Vector3 = VOWELS[rng.randi_range(0, VOWELS.size() - 1)] * fscale
+			plan.append([t, t + mini(cl, length), t + length, pitch, cur, tgt,
+				rng.randi_range(0, 2), rng.randf_range(0.3, 1.0)])
+			cur = tgt
+			t += length
+		t += int(-log(maxf(rng.randf(), 1e-6)) * talk_pause * RATE)
+	var voice := PackedFloat32Array()
+	voice.resize(n)
+	var fric := PackedFloat32Array()
+	fric.resize(n)
+	var r1 := exp(-PI * talk_bw / RATE)
+	var r2 := exp(-PI * talk_bw * 1.4 / RATE)
+	var r3 := exp(-PI * talk_bw * 2.0 / RATE)
+	var c1 := 0.0
+	var c2 := 0.0
+	var c3 := 0.0
+	var y1a := 0.0
+	var y1b := 0.0
+	var y2a := 0.0
+	var y2b := 0.0
+	var y3a := 0.0
+	var y3b := 0.0
+	var k_glide := 1.0 - exp(-TAU * talk_glide / RATE)
+	var k_tilt := 1.0 - exp(-TAU * talk_tilt / RATE)
+	var a_hp := exp(-TAU * 3000.0 / RATE)
+	var k_fenv := 1.0 - exp(-TAU * 200.0 / RATE)
+	var p_s1 := 0.0
+	var p_s2 := 0.0
+	var ph := 0.0
+	var prev_g := 0.0
+	var tilt := 0.0
+	var hp_lp := 0.0
+	var fenv := 0.0
+	var oq := talk_open_q
+	var vpeak := 0.0001
+	var fpeak := 0.0001
+	# Current syllable, unpacked into typed locals (Variant array reads per
+	# sample were the hot spot).
+	var si := -1
+	var s_start := n
+	var s_cend := n
+	var s_end := -1
+	var s_pitch := f0
+	var s_from := Vector3.ZERO
+	var s_to := Vector3.ZERO
+	var s_kind := 0
+	var s_fric := 0.0
+	var s_vlen := 1.0
+	var burst := int(0.012 * RATE)
+	# Uniform noise with unit variance: randfn's Box-Muller is ~3x the cost.
+	const U := 1.7320508
 	var i := 0
 	while i < n:
 		var stop := mini(i + CHUNK, n)
 		while i < stop:
-			if i % 128 == 0:
-				# ~4 Hz chance-driven retarget = chattering syllable rhythm.
-				if rng.randf() < 0.35:
-					syl_target = Vector2(rng.randf(), rng.randf())
-				syl = syl.lerp(syl_target, 0.3)
-			var t := float(i) / RATE
-			var swell := 0.7 + 0.2 * sin(TAU * 0.11 * t + ph) + 0.1 * sin(TAU * 0.031 * t)
-			lp += (Vector2(rng.randf_range(-1.0, 1.0), rng.randf_range(-1.0, 1.0)) - lp) * 0.16
-			lp2 += (lp - lp2) * 0.16
-			out[i] = Vector2(
-				lp2.x * (0.35 + 0.65 * syl.x),
-				lp2.y * (0.35 + 0.65 * syl.y)) * swell
+			if i >= s_end:
+				si += 1
+				if si < plan.size():
+					var syl: Array = plan[si]
+					s_start = syl[0]
+					s_cend = syl[1]
+					s_end = syl[2]
+					s_pitch = syl[3]
+					s_from = syl[4]
+					s_to = syl[5]
+					s_kind = syl[6]
+					s_fric = syl[7]
+					s_vlen = maxf(float(s_end - s_cend), 1.0)
+				else:
+					s_start = n
+					s_end = n + 1
+			var amp := 0.0
+			var fr_target := 0.0
+			var pitch_target := f0
+			if i >= s_start:
+				pitch_target = s_pitch
+				if i < s_cend:
+					if s_kind == 0:
+						fr_target = s_fric
+					elif s_kind == 1:
+						fr_target = 1.0 if i >= s_cend - burst else 0.0
+					else:
+						amp = 0.3
+				else:
+					amp = pow(sin(PI * float(i - s_cend) / s_vlen), talk_env_pow)
+				if i % 64 == 0:
+					var fv: Vector3
+					if i < s_cend:
+						fv = s_from * 0.8
+					else:
+						fv = (s_from * 0.85).lerp(s_to, float(i - s_cend) / s_vlen)
+					c1 = 2.0 * r1 * cos(TAU * fv.x / RATE)
+					c2 = 2.0 * r2 * cos(TAU * fv.y / RATE)
+					c3 = 2.0 * r3 * cos(TAU * fv.z / RATE)
+			# Pitch glides between syllable targets (two one-pole stages).
+			p_s1 += (pitch_target - f0 - p_s1) * k_glide
+			p_s2 += (p_s1 - p_s2) * k_glide
+			var pitch := (f0 + p_s2) * (1.0 + talk_jitter * U * (2.0 * rng.randf() - 1.0))
+			ph += pitch / RATE
+			if ph >= 1.0:
+				ph -= 1.0
+			var g := 0.5 - 0.5 * cos(PI * ph / oq) if ph < oq \
+				else maxf(cos(PI * (ph - oq) / (2.0 * (1.0 - oq))), 0.0)
+			tilt += ((g - prev_g) * 30.0 - tilt) * k_tilt
+			prev_g = g
+			var w := U * (2.0 * rng.randf() - 1.0)
+			var src := (tilt + w * talk_breath) * amp
+			var o1 := (1.0 - r1) * src + c1 * y1a - r1 * r1 * y1b
+			y1b = y1a
+			y1a = o1
+			var o2 := (1.0 - r2) * src + c2 * y2a - r2 * r2 * y2b
+			y2b = y2a
+			y2a = o2
+			var o3 := (1.0 - r3) * src + c3 * y3a - r3 * r3 * y3b
+			y3b = y3a
+			y3a = o3
+			var v := o1 + 0.6 * o2 + 0.3 * o3
+			voice[i] = v
+			vpeak = maxf(vpeak, absf(v))
+			# Consonant hiss: highpassed noise under its own envelope.
+			hp_lp = w + (hp_lp - w) * a_hp
+			fenv += (fr_target - fenv) * k_fenv
+			var f := (w - hp_lp) * fenv
+			fric[i] = f
+			fpeak = maxf(fpeak, absf(f))
 			i += 1
-		await get_tree().process_frame
-	return out
+		await _slice()
+	var fg := vpeak * talk_fric / fpeak
+	for j in n:
+		voice[j] += fric[j] * fg
+	return voice
+
+
+# Small stereo Schroeder reverb (4 combs + 2 allpasses per channel): the
+# stands' echo without convolution. `size` scales the delay lengths. All
+# delay lines live in one flat buffer (packed arrays are copy-on-write, so
+# per-line arrays would copy on every write).
+func _reverb(buf: PackedVector2Array, wet: float, size: float) -> PackedVector2Array:
+	var n := buf.size()
+	var fb := 0.84
+	var damp := 0.3
+	var wet_buf := PackedVector2Array()
+	wet_buf.resize(n)
+	var peak_dry := 0.0001
+	var peak_wet := 0.0001
+	for ch in 2:
+		var lens := PackedInt32Array()
+		for base in [1557, 1617, 1491, 1422, 556, 225]:
+			lens.append(int(base * size) + ch * 23)
+		var offs := PackedInt32Array()
+		var total := 0
+		for l in lens:
+			offs.append(total)
+			total += l
+		var d := PackedFloat32Array()
+		d.resize(total)
+		var p0 := 0
+		var p1 := 0
+		var p2 := 0
+		var p3 := 0
+		var p4 := 0
+		var p5 := 0
+		var s0 := 0.0
+		var s1 := 0.0
+		var s2 := 0.0
+		var s3 := 0.0
+		var i := 0
+		while i < n:
+			var stop := mini(i + CHUNK, n)
+			while i < stop:
+				var x: float = (buf[i].x if ch == 0 else buf[i].y) * 0.015
+				var y0 := d[offs[0] + p0]
+				s0 = y0 * (1.0 - damp) + s0 * damp
+				d[offs[0] + p0] = x + s0 * fb
+				p0 = (p0 + 1) % lens[0]
+				var y1 := d[offs[1] + p1]
+				s1 = y1 * (1.0 - damp) + s1 * damp
+				d[offs[1] + p1] = x + s1 * fb
+				p1 = (p1 + 1) % lens[1]
+				var y2 := d[offs[2] + p2]
+				s2 = y2 * (1.0 - damp) + s2 * damp
+				d[offs[2] + p2] = x + s2 * fb
+				p2 = (p2 + 1) % lens[2]
+				var y3 := d[offs[3] + p3]
+				s3 = y3 * (1.0 - damp) + s3 * damp
+				d[offs[3] + p3] = x + s3 * fb
+				p3 = (p3 + 1) % lens[3]
+				var acc := y0 + y1 + y2 + y3
+				var b4 := d[offs[4] + p4]
+				d[offs[4] + p4] = acc + b4 * 0.5
+				p4 = (p4 + 1) % lens[4]
+				acc = b4 - acc
+				var b5 := d[offs[5] + p5]
+				d[offs[5] + p5] = acc + b5 * 0.5
+				p5 = (p5 + 1) % lens[5]
+				acc = b5 - acc
+				var v := wet_buf[i]
+				if ch == 0:
+					v.x = acc
+				else:
+					v.y = acc
+				wet_buf[i] = v
+				peak_wet = maxf(peak_wet, absf(acc))
+				i += 1
+			await _slice()
+	for v in buf:
+		peak_dry = maxf(peak_dry, maxf(absf(v.x), absf(v.y)))
+	var ws := peak_dry / peak_wet * wet
+	for j in n:
+		buf[j] = buf[j] * (1.0 - wet) + wet_buf[j] * ws
+	return buf
+
+
+# Applause: independent clappers, each clapping at their own steady rate
+# (2-5 claps/s, ±8% timing) — periodicity per pair of hands is what makes it
+# read as applause instead of rain. Each clap is a ~4 ms noise burst
+# through the clapper's own bandpass. Tuned with the AudioSet tagger
+# (Applause + Clapping about 1.4 of 2; the old Poisson pats read as rain).
+var applause_clappers: int = 12
+var applause_rate: float = 2.25    # slowest clapper (claps/s); range +2.5
+var applause_hz: float = 1814.0    # bandpass centre, ±30% per clapper
+var applause_bw: float = 491.0
+var applause_decay: float = 0.0036 # clap burst decay (s)
+var applause_raw: float = 0.077    # unfiltered share of the burst
+var applause_wet: float = 0.1
+
+
+func _synth_applause(seconds: float) -> PackedVector2Array:
+	var n := int(seconds * RATE)
+	var out := PackedVector2Array()
+	out.resize(n)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 55005
+	for k in applause_clappers:
+		var rate := rng.randf_range(applause_rate, applause_rate + 2.5)
+		var f := rng.randf_range(applause_hz * 0.7, applause_hz * 1.3)
+		var r := exp(-PI * applause_bw / RATE)
+		var c := 2.0 * r * cos(TAU * f / RATE)
+		var dec := exp(-1.0 / (applause_decay * RATE))
+		var g := pow(rng.randf_range(0.3, 1.0), 1.5)
+		var pan := rng.randf()
+		var gl := g * sqrt(1.0 - pan)
+		var gr := g * sqrt(pan)
+		var next := int(rng.randf_range(0.0, 1.0 / rate) * RATE)
+		var env := 0.0
+		var ya := 0.0
+		var yb := 0.0
+		var i := 0
+		while i < n:
+			var stop := mini(i + CHUNK, n)
+			while i < stop:
+				if i == next:
+					env += rng.randf_range(0.5, 1.0)
+					next += int(RATE / rate * rng.randf_range(0.92, 1.08))
+				env *= dec
+				# Between claps the burst and its ring have died out: skip.
+				if env < 0.0005 and absf(ya) < 0.0005:
+					ya = 0.0
+					yb = 0.0
+					i += 1
+					continue
+				var x := 1.7320508 * (2.0 * rng.randf() - 1.0) * env
+				var y := (1.0 - r) * x + c * ya - r * r * yb
+				yb = ya
+				ya = y
+				var s := y + x * applause_raw
+				out[i] += Vector2(s * gl, s * gr)
+				i += 1
+			await _slice()
+	return await _reverb(out, applause_wet, 0.6)
 
 
 # Roar engine: noise through two vocal-formant resonators (~650 / 1300 Hz,
