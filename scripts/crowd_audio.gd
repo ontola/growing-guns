@@ -1,7 +1,7 @@
 extends "res://addons/crowd_sound/crowd_sound.gd"
 
 # Colosseum crowd audio. The sound engine itself (synthesized beds, reactions,
-# chants) is the shared crowd_sound addon from the GameNight SDK; this layer
+# chants) is the crowd_sound addon from ontola/godot-crowd-sound; this layer
 # adds what is Growing Guns-specific:
 #
 # - The crowd ring: ColosseumBuilder.build registers the bowl geometry + the

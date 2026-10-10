@@ -3,7 +3,7 @@ extends Node
 # Procedural crowd sound. No samples on disk: every loop and reaction is
 # synthesized at boot, chunked across frames. Started in Growing Guns; any
 # Godot game with an audience can use it. Games keep their own copy of this
-# addon in sync with the GameNight SDK (sdk/godot/sync.py).
+# addon in sync with ontola/godot-crowd-sound (sync.py).
 #
 # Two state values drive the whole mix:
 #
