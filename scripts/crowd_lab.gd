@@ -171,7 +171,7 @@ func _play_chant(idx: int) -> void:
 func _reroll_chants() -> void:
 	if _reroll_btn:
 		_reroll_btn.disabled = true
-	var fresh: Array[AudioStreamWAV] = []
+	var fresh: Array[AudioStream] = []
 	var seeds := PackedInt32Array()
 	for i in CrowdAudio.CHANT_COUNT:
 		var seed_v := randi() % 1000000
