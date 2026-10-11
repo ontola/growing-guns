@@ -17,6 +17,7 @@ name: Release
 
 on:
   push:
+    branches: [main]
     tags: ['v*']
   workflow_dispatch:
 
@@ -72,6 +73,7 @@ jobs:
         run: |
           set -euxo pipefail
           VERSION="${GITHUB_REF_NAME#v}"
+          if [[ "$GITHUB_REF" != refs/tags/v* ]]; then VERSION="dev-${GITHUB_SHA:0:12}"; fi
           echo "Stamping version: ${VERSION}"
           sed -i 's|^config/version="[^"]*"|config/version="'"${VERSION}"'"|' project.godot
           echo "${VERSION}" > VERSION
@@ -123,6 +125,7 @@ jobs:
           if-no-files-found: error
 
       - name: Install butler
+        if: startsWith(github.ref, 'refs/tags/v')
         run: |
           set -euxo pipefail
           curl -sL -o butler.zip "https://broth.itch.zone/butler/linux-amd64/LATEST/archive/default"
@@ -131,6 +134,7 @@ jobs:
           ./butler --version
 
       - name: Push to itch.io
+        if: startsWith(github.ref, 'refs/tags/v')
         env:
           BUTLER_API_KEY: ${{ secrets.BUTLER_API_KEY }}
         run: |
