@@ -22,7 +22,10 @@ on:
   workflow_dispatch:
 
 jobs:
+  gamenight-sdk:
+    uses: ontola/gamenight/.github/workflows/godot-sdk-check.yml@main
   release:
+    needs: gamenight-sdk
     runs-on: ubuntu-latest
     permissions:
       contents: write    # for softprops/action-gh-release
