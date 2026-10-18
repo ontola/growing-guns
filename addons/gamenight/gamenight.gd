@@ -46,6 +46,10 @@ const RECONNECT_DELAY := 2.0
 @export var daemon_url: String = "ws://127.0.0.1:7912"
 ## Reconnect automatically while the daemon is away.
 @export var auto_reconnect: bool = true
+## A game started by hand (not by GameNight) stays offline, so a test run never
+## joins the party on this machine. Set GAMENIGHT_ADDR, or turn this on, to
+## connect a hand-started game to a development host anyway.
+@export var connect_standalone: bool = false
 
 var party: Dictionary = {}
 var session := ""
@@ -112,7 +116,17 @@ func _ready() -> void:
 	if env_overlay_url != "":
 		overlay_url = env_overlay_url
 	_launch_token = OS.get_environment("GAMENIGHT_TOKEN")
+	if not launched_by_daemon and env_addr == "" and not connect_standalone:
+		auto_reconnect = false
+		return
 	_open()
+
+## Connect a hand-started game to the host at [member daemon_url] after all,
+## for example from a debug menu. GameNight-launched games are always online.
+func connect_to_host() -> void:
+	auto_reconnect = true
+	if _socket == null:
+		_open()
 
 func _open() -> void:
 	_socket = WebSocketPeer.new()
@@ -175,6 +189,27 @@ func notify_ready(session_id: String) -> void:
 func notify_finished(session_id: String) -> void:
 	_send({"type": "finished", "session": session_id})
 
+## Opt into live roster updates ([signal roster_changed]) for this session.
+## Call it from [signal prepared], before [method notify_ready]. Pass
+## `instant_join = true` only when a running match can take a new player at
+## once; with false, newcomers wait for your next round.
+func notify_participation(session_id: String, instant_join: bool) -> void:
+	_send({"type": "participation", "session": session_id, "instant_join": instant_join})
+
+var _activity_at: Dictionary = {}
+
+## Tell GameNight a person is really playing on this seat's controller, so the
+## party does not mark them asleep. Call it on meaningful input (a press, a
+## stick past its deadzone); it sends at most once a second per controller.
+func report_activity(seat_index: int) -> void:
+	if session.is_empty(): return
+	var token := _controller_for_seat(seat_index)
+	if token.is_empty(): return
+	var now := Time.get_ticks_msec()
+	if now - int(_activity_at.get(token, -100000)) < 1000: return
+	_activity_at[token] = now
+	_send({"type": "controller_input", "session": session, "controller": token})
+
 ## Declare the match settings the party may change (items on/off, stock
 ## count, arena...). Call once, any time after _ready(); the addon re-declares
 ## automatically after every reconnect. Each entry is a Dictionary matching
@@ -192,6 +227,12 @@ func declare_settings(settings: Array) -> void:
 
 var _declared_settings: Array = []
 
+## Change one of this game's declared settings, for example from its own
+## Start menu, so the party's apps (and an LLM) show the same value. The daemon
+## validates it and answers with [signal setting_changed], like any other write.
+func set_setting(key: String, value: Variant) -> void:
+	_send({"type": "set_setting", "key": key, "value": value})
+
 ## Optional: give each player a screen of their own on their phone (see
 ## "Phone screens" in docs/protocol.md). `root` is an absolute directory the
 ## host's web server may serve, `entry` a page inside it, and `app` a native
@@ -207,6 +248,56 @@ func declare_companion(root: String = "", entry: String = "", app: Dictionary = 
 	_send(msg)
 
 var _declared_companion: Dictionary = {}
+
+## Serve a folder of the game, such as "res://phone", as the phone screen.
+## The host serves pages from a real directory, which an exported game does
+## not have, so this copies the folder to user:// first and declares that copy.
+## Keep raw files in the export: add the folder to the export preset's
+## include filter, and set PNG and font files to the "Keep File" importer.
+## Warns when the folder would not fit a hosted room (see docs/protocol.md).
+func declare_companion_folder(folder: String = "res://phone", entry: String = "index.html", app: Dictionary = {}) -> String:
+	var target := "user://gamenight-phone"
+	var files := _companion_files(folder, "")
+	if files.is_empty():
+		push_warning("GameNight: no phone screen files found in %s" % folder)
+		return ""
+	DirAccess.make_dir_recursive_absolute(target)
+	var total := 0
+	for path in files:
+		var data := FileAccess.get_file_as_bytes(folder.path_join(path))
+		var encoded := int(ceil(data.size() / 3.0)) * 4
+		total += encoded
+		if encoded > 512 * 1024:
+			push_warning("GameNight: phone file %s is %d KiB in a hosted room; the limit is 512 KiB" % [path, encoded >> 10])
+		if not path.get_extension().to_lower() in COMPANION_TYPES:
+			push_warning("GameNight: hosted rooms do not serve phone file %s (use HTML, JS, CSS, JSON, SVG, PNG, JPEG, WebP or WOFF2)" % path)
+		DirAccess.make_dir_recursive_absolute(target.path_join(path.get_base_dir()))
+		var out := FileAccess.open(target.path_join(path), FileAccess.WRITE)
+		if out == null: continue
+		out.store_buffer(data)
+		out.close()
+	if files.size() > 128 or total > 2 * 1024 * 1024:
+		push_warning("GameNight: the phone screen is %d files, %d KiB in a hosted room; the limit is 128 files, 2048 KiB" % [files.size(), total >> 10])
+	var root := ProjectSettings.globalize_path(target)
+	declare_companion(root, entry, app)
+	return root
+
+const COMPANION_TYPES := ["html", "htm", "js", "mjs", "css", "json", "svg", "png", "jpg", "jpeg", "webp", "woff2", "apk"]
+
+func _companion_files(folder: String, prefix: String) -> Array:
+	var found: Array = []
+	var dir := DirAccess.open(folder.path_join(prefix))
+	if dir == null: return found
+	for name in dir.get_files():
+		if name.ends_with(".import"):
+			if not dir.file_exists(name.trim_suffix(".import")):
+				push_warning("GameNight: %s was imported, not exported raw; set its importer to Keep File" % prefix.path_join(name.trim_suffix(".import")))
+			continue
+		if name.ends_with(".uid") or name.ends_with(".remap"): continue
+		found.append(prefix.path_join(name))
+	for sub in dir.get_directories():
+		found.append_array(_companion_files(folder, prefix.path_join(sub)))
+	return found
 
 ## Send JSON to one player's phone page, or to every phone when `player_id`
 ## is empty. Answers arrive via [signal companion_message].
@@ -284,12 +375,77 @@ func devices_for_local_seats(count: int) -> Array:
 	return devices
 
 ## Canonical host input for a seat index. Missing/disconnected/stale input is neutral.
-func frame_for_seat(index: int) -> Dictionary:
-	if phase != "running" or Time.get_ticks_msec()-_frame_at >= 250: return {}
+## Input is empty while the session is not running; pass `any_phase = true`
+## to read it anyway, for example for your own Start menu.
+func frame_for_seat(index: int, any_phase: bool = false) -> Dictionary:
+	if (phase != "running" and not any_phase) or Time.get_ticks_msec()-_frame_at >= 250: return {}
+	var token := _controller_for_seat(index)
+	return _frames.get(token,{}).duplicate(true) if not token.is_empty() else {}
+
+func _controller_for_seat(index: int) -> String:
 	for seat in party.get("seats",[]):
 		if int(seat.get("index",-1)) == index:
-			return _frames.get(str(seat.get("controller","")),{}).duplicate(true)
-	return {}
+			return str(seat.get("controller",""))
+	return ""
+
+## Button bits and axis indices of a controller frame (docs/protocol.md).
+const BUTTON_A := 0
+const BUTTON_B := 1
+const BUTTON_X := 2
+const BUTTON_Y := 3
+const BUTTON_LB := 4
+const BUTTON_RB := 5
+const BUTTON_BACK := 6 ## Owned by GameNight: never bind it in a game.
+const BUTTON_START := 7
+const BUTTON_LS := 8
+const BUTTON_RS := 9
+const BUTTON_UP := 10
+const BUTTON_DOWN := 11
+const BUTTON_LEFT := 12
+const BUTTON_RIGHT := 13
+const AXIS_LEFT_X := 0
+const AXIS_LEFT_Y := 1
+const AXIS_RIGHT_X := 2
+const AXIS_RIGHT_Y := 3
+const AXIS_LEFT_TRIGGER := 4
+const AXIS_RIGHT_TRIGGER := 5
+## Deadzones our games settled on.
+const STICK_DEADZONE := 0.15
+const TRIGGER_DEADZONE := 0.06
+
+## A stick as a Vector2 with a radial deadzone, rescaled so it starts at 0.
+## `side` 0 is the left stick, 1 the right one. Up is negative y.
+static func stick(frame: Dictionary, side: int = 0, deadzone: float = STICK_DEADZONE) -> Vector2:
+	var v := Vector2(axis(frame, side * 2), axis(frame, side * 2 + 1))
+	var length := v.length()
+	if length <= deadzone: return Vector2.ZERO
+	return v / length * minf((length - deadzone) / (1.0 - deadzone), 1.0)
+
+## A trigger from 0 to 1 with a deadzone. `side` 0 is the left trigger.
+static func trigger(frame: Dictionary, side: int = 0, deadzone: float = TRIGGER_DEADZONE) -> float:
+	var t := maxf(axis(frame, AXIS_LEFT_TRIGGER + side), 0.0)
+	return 0.0 if t <= deadzone else (t - deadzone) / (1.0 - deadzone)
+
+var _buttons_now: Dictionary = {}
+var _buttons_before: Dictionary = {}
+
+## True on the physics tick a seat's button went down. Read it in
+## _physics_process. After Start and Resume a button that is still held from
+## the lobby must be released first, so one press never does two things.
+func just_pressed(seat_index: int, button_index: int) -> bool:
+	var bit := 1 << button_index
+	return (int(_buttons_now.get(seat_index, 0)) & bit) != 0 and (int(_buttons_before.get(seat_index, 0)) & bit) == 0
+
+func _physics_process(_delta: float) -> void:
+	_buttons_before = _buttons_now.duplicate()
+	_buttons_now = {}
+	for seat in party.get("seats",[]):
+		var index := int(seat.get("index",-1))
+		_buttons_now[index] = int(frame_for_seat(index, true).get("buttons", 0))
+
+func _hold_buttons() -> void:
+	for index in _buttons_now.keys():
+		_buttons_now[index] = 0x3FFF
 
 static func axis(frame: Dictionary, index: int) -> float:
 	var axes: Array = frame.get("axes",[])
@@ -392,6 +548,7 @@ func _handle(msg: Variant) -> void:
 			if phase != "ready": return
 			phase = "running"
 			_performance_running = msg.get("session", "") == _performance_session
+			_hold_buttons()
 			started.emit(msg.get("session", ""))
 		"pause":
 			if phase != "running": return
@@ -403,6 +560,7 @@ func _handle(msg: Variant) -> void:
 			if phase != "paused": return
 			phase = "running"
 			_performance_running = msg.get("session", "") == _performance_session
+			_hold_buttons()
 			resumed.emit(msg.get("session", ""))
 		"dispose":
 			_performance_running = false
