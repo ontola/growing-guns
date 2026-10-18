@@ -38,6 +38,10 @@ signal roster_changed(seats: Array, players: Array, presence: Array)
 signal setting_changed(key: String, value: Variant)
 
 const PROTOCOL_VERSION := 1
+## This addon's version. GameNight's welcome names the version it ships
+## (GODOT_SDK_VERSION in gamenight-protocol); an older copy warns, because a
+## vendored addon that fell behind fails quietly. Bump both together.
+const SDK_VERSION := 2
 const RECONNECT_DELAY := 2.0
 
 ## Which title this process runs. Must match the playlist entry's game id.
@@ -511,6 +515,8 @@ func _handle(msg: Variant) -> void:
 	if kind in ["start","pause","resume","dispose","party_updated"] and (session.is_empty() or msg.get("session","") != session): return
 	match kind:
 		"welcome":
+			if int(msg.get("godot_sdk", 0)) > SDK_VERSION:
+				push_warning("GameNight: this game's addons/gamenight (version %d) is older than GameNight's (%d). Update it with sdk/godot/sync.py." % [SDK_VERSION, int(msg.get("godot_sdk", 0))])
 			party = msg.get("party", {})
 			daemon_connected.emit()
 			party_updated.emit(party)
