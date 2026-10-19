@@ -267,6 +267,12 @@ func show_damage_direction(from_pos: Vector3) -> void:
 	_hud.damage.flash(atan2(local_x, -local_z))
 
 
+func set_phoenix_fade(alpha: float) -> void:
+	var phoenix: ColorRect = _hud.get("phoenix")
+	if phoenix:
+		phoenix.color.a = alpha
+
+
 func show_death_effect(show: bool) -> void:
 	Trace.mark("death effect %s (render_player id=%d)" % ["SHOW→opaque" if show else "hide", player_id])
 	if show:
@@ -619,6 +625,19 @@ func _build() -> void:
 	revive_panel.z_index = 15
 	root.add_child(revive_panel)
 
+	# Phoenix rise: the reviving player's view goes white, and only theirs.
+	# Its own layer above the HUD, inside this view's viewport, so splitscreen
+	# neighbours stay untouched.
+	var phoenix_layer := CanvasLayer.new()
+	phoenix_layer.layer = 11
+	viewport.add_child(phoenix_layer)
+	var phoenix := ColorRect.new()
+	phoenix.name = "PhoenixFade"
+	phoenix.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	phoenix.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	phoenix.color = Color(1.0, 1.0, 1.0, 0.0)
+	phoenix_layer.add_child(phoenix)
+
 	_hud = {
 		"hp_panel": hp_panel,
 		"ammo_panel": ammo_panel,
@@ -637,6 +656,7 @@ func _build() -> void:
 		"modifier_toast": modifier_toast,
 		"round_win": round_win,
 		"revive_panel": revive_panel,
+		"phoenix": phoenix,
 	}
 
 

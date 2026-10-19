@@ -328,8 +328,6 @@ var _flash_adsr_peak: float = 0.0
 var _flash_adsr_sustain_end_ms: int = 0
 var _flash_adsr_release_end_ms: int = 0
 var _phoenix_fade_overlay: ColorRect = null
-var _phoenix_fade_alpha: float = 0.0
-var _phoenix_fade_out_per_s: float = 0.0
 const PHOENIX_FADE_OUT_SECONDS := 0.9
 
 var _last_input_was_controller := false
@@ -4027,7 +4025,9 @@ func _build_explosion_flash_overlay() -> void:
 func _build_phoenix_fade_overlay() -> void:
 	var fade_layer := CanvasLayer.new()
 	fade_layer.name = "PhoenixFadeLayer"
-	fade_layer.layer = 51
+	# Under the HUD, never over it: the pause menu lives there, and a white
+	# sheet over it is a game nobody can get out of.
+	fade_layer.layer = 0
 	add_child(fade_layer)
 	_phoenix_fade_overlay = ColorRect.new()
 	_phoenix_fade_overlay.name = "PhoenixFadeOverlay"
@@ -4050,32 +4050,58 @@ func _finish_shader_warmup() -> void:
 		ShaderWarmup.warmup_effect_shaders($Arena)
 
 
+## Phoenix fade state per local player id: [alpha, fade-out per second].
+## Each view whitens on its own; the full-window overlay is only for a player
+## without a view of their own.
+var _phoenix_fades: Dictionary = {}
+
 func set_phoenix_fade(player_id: int, alpha: float) -> void:
 	if player_id not in _local_view_player_ids():
 		return
-	_phoenix_fade_out_per_s = 0.0
-	_phoenix_fade_alpha = clampf(alpha, 0.0, 1.0)
-	if _phoenix_fade_overlay:
-		_phoenix_fade_overlay.color = Color(1.0, 1.0, 1.0, _phoenix_fade_alpha)
+	_phoenix_fades[player_id] = [clampf(alpha, 0.0, 1.0), 0.0]
+	_apply_phoenix_fade(player_id)
 
 
 func begin_phoenix_fade_out(player_id: int) -> void:
 	if player_id not in _local_view_player_ids():
 		return
-	if _phoenix_fade_alpha <= 0.001:
+	var fade: Array = _phoenix_fades.get(player_id, [0.0, 0.0])
+	if float(fade[0]) <= 0.001:
 		return
-	_phoenix_fade_out_per_s = _phoenix_fade_alpha / PHOENIX_FADE_OUT_SECONDS
+	fade[1] = float(fade[0]) / PHOENIX_FADE_OUT_SECONDS
+	_phoenix_fades[player_id] = fade
 
 
 func _update_phoenix_fade(delta: float) -> void:
-	if _phoenix_fade_overlay == null:
-		return
-	if _phoenix_fade_out_per_s > 0.0:
-		_phoenix_fade_alpha = move_toward(_phoenix_fade_alpha, 0.0, _phoenix_fade_out_per_s * delta)
-		if _phoenix_fade_alpha <= 0.001:
-			_phoenix_fade_alpha = 0.0
-			_phoenix_fade_out_per_s = 0.0
-		_phoenix_fade_overlay.color = Color(1.0, 1.0, 1.0, _phoenix_fade_alpha)
+	for player_id in _phoenix_fades.keys():
+		var fade: Array = _phoenix_fades[player_id]
+		if float(fade[1]) <= 0.0:
+			if float(fade[0]) <= 0.0 or _phoenix_still_rising(int(player_id)):
+				continue
+			# Nobody is rising any more (the player left, the round was torn
+			# down mid-ascent) but the view is still white. Fade it out rather
+			# than leave a white screen nothing will ever clear.
+			fade[1] = float(fade[0]) / PHOENIX_FADE_OUT_SECONDS
+		fade[0] = move_toward(float(fade[0]), 0.0, float(fade[1]) * delta)
+		if float(fade[0]) <= 0.001:
+			fade[0] = 0.0
+			fade[1] = 0.0
+		_apply_phoenix_fade(player_id)
+
+
+func _phoenix_still_rising(player_id: int) -> bool:
+	var p: Node = players_root.get_node_or_null(str(player_id)) if players_root else null
+	return p != null and (bool(p.get("_phoenix_ascending")) or bool(p.get("_coop_phoenix_held")))
+
+
+func _apply_phoenix_fade(player_id: int) -> void:
+	var alpha := float((_phoenix_fades.get(player_id, [0.0, 0.0]) as Array)[0])
+	var renderer := _render_players.get(player_id) as RenderPlayer
+	if renderer and is_instance_valid(renderer):
+		renderer.set_phoenix_fade(alpha)
+		alpha = 0.0
+	if _phoenix_fade_overlay:
+		_phoenix_fade_overlay.color = Color(1.0, 1.0, 1.0, alpha)
 
 
 func _build_network_status_panel() -> void:

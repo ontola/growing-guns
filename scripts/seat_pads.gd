@@ -72,6 +72,33 @@ func is_seat_device(device: int) -> bool:
 	return _seats.has(device)
 
 
+## The GameNight player (profile UUID) on the seat this device drives, or ""
+## when the device is a real pad or nobody sits there.
+func profile_for_device(device: int) -> String:
+	if not _seats.has(device):
+		return ""
+	for seat in GameNight.party.get("seats", []):
+		if typeof(seat) == TYPE_DICTIONARY and int(seat.get("index", -1)) == int(_seats[device]):
+			return str((seat.get("occupant", {}) as Dictionary).get("player_id", ""))
+	return ""
+
+
+## Everyone seated on this machine, in seat order: [{profile, name}].
+func local_profiles() -> Array:
+	var names := {}
+	for player in GameNight.party.get("players", []):
+		if typeof(player) == TYPE_DICTIONARY:
+			names[str(player.get("id", ""))] = str(player.get("name", ""))
+	var out: Array = []
+	var devices := _seats.keys()
+	devices.sort()
+	for device in devices:
+		var profile := profile_for_device(int(device))
+		if not profile.is_empty():
+			out.append({"profile": profile, "name": names.get(profile, "Player %d" % (out.size() + 1))})
+	return out
+
+
 ## Let go of everything, so nothing stays held across a pause or a new match.
 func release_all() -> void:
 	for device in _last.keys():

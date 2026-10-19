@@ -87,6 +87,8 @@ func _floor_half(side: float) -> Node3D:
 # curve (player.gd enter_spawn_cage) — keep trans/ease in sync.
 func descend(drop: float, duration: float) -> void:
 	_descend_tween = create_tween()
+	# Same tick as the player's matching descent (Player.enter_spawn_cage).
+	_descend_tween.set_process_mode(Tween.TWEEN_PROCESS_PHYSICS)
 	_descend_tween.tween_property(self, "position:y", position.y - drop, duration) \
 		.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
 

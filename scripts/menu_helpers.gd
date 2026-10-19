@@ -11,6 +11,12 @@ static var retro_enabled: bool = false
 static var music_db: float = -16.0
 static var mouse_sens_mult: float = 1.0
 static var stick_sens_mult: float = 1.0
+## Stick sensitivity per GameNight player (profile UUID), so everyone on the
+## couch keeps their own, night after night. Falls back to stick_sens_mult.
+static var stick_sens_by_profile: Dictionary = {}
+## Under GameNight: returns the players seated here, [{profile, name}], so the
+## settings panel offers one aim slider each instead of a shared one.
+static var stick_profiles_provider: Callable
 static var movement_tilt_enabled: bool = true
 static var player_name: String = ""
 
@@ -138,6 +144,7 @@ static func load_settings() -> void:
 	music_db = float(cfg.get_value("audio", "music_db", music_legacy_default))
 	mouse_sens_mult = float(cfg.get_value("input", "mouse_sens_mult", 1.0))
 	stick_sens_mult = float(cfg.get_value("input", "stick_sens_mult", 1.0))
+	stick_sens_by_profile = cfg.get_value("input", "stick_sens_by_profile", {})
 	movement_tilt_enabled = cfg.get_value("input", "movement_tilt", true)
 	player_name = String(cfg.get_value("player", "name", ""))
 
@@ -147,9 +154,15 @@ static func save_settings() -> void:
 	cfg.set_value("audio", "music_db", music_db)
 	cfg.set_value("input", "mouse_sens_mult", mouse_sens_mult)
 	cfg.set_value("input", "stick_sens_mult", stick_sens_mult)
+	cfg.set_value("input", "stick_sens_by_profile", stick_sens_by_profile)
 	cfg.set_value("input", "movement_tilt", movement_tilt_enabled)
 	cfg.set_value("player", "name", player_name)
 	cfg.save(SETTINGS_PATH)
+
+static func stick_sens_for(profile: String) -> float:
+	if profile.is_empty():
+		return stick_sens_mult
+	return float(stick_sens_by_profile.get(profile, stick_sens_mult))
 
 static func build_settings_panel(parent: Node, close_callback: Callable, left_align: bool = false) -> Control:
 	var root := Control.new()
@@ -290,19 +303,30 @@ static func build_settings_panel(parent: Node, close_callback: Callable, left_al
 			settings_changed_callback.call()
 	)
 	
-	# Right-stick look sensitivity (all local pads)
-	var stick_row := build_slider_row("Stick sensitivity", stick_sens_mult, 0.3, 2.5, 0.05, "%.2fx" % stick_sens_mult)
-	vb.add_child(stick_row["row"])
-	var stick_slider: HSlider = stick_row["slider"]
-	var stick_val_lbl: Label = stick_row["value_label"]
-	stick_slider.value_changed.connect(func(v: float) -> void:
-		stick_sens_mult = v
-		if stick_val_lbl:
-			stick_val_lbl.text = "%.2fx" % v
-		save_settings()
-		if settings_changed_callback.is_valid():
-			settings_changed_callback.call()
-	)
+	# Right-stick look sensitivity: one slider per seated GameNight player,
+	# or a single one for every local pad when nobody is seated.
+	var stick_players: Array = stick_profiles_provider.call() if stick_profiles_provider.is_valid() else []
+	if stick_players.is_empty():
+		stick_players = [{"profile": "", "name": ""}]
+	for entry in stick_players:
+		var profile := str(entry.get("profile", ""))
+		var label := "Stick sensitivity" if profile.is_empty() else "Aim: %s" % str(entry.get("name", ""))
+		var sens := stick_sens_for(profile)
+		var stick_row := build_slider_row(label, sens, 0.3, 2.5, 0.05, "%.2fx" % sens)
+		vb.add_child(stick_row["row"])
+		var stick_slider: HSlider = stick_row["slider"]
+		var stick_val_lbl: Label = stick_row["value_label"]
+		stick_slider.value_changed.connect(func(v: float) -> void:
+			if profile.is_empty():
+				stick_sens_mult = v
+			else:
+				stick_sens_by_profile[profile] = v
+			if stick_val_lbl:
+				stick_val_lbl.text = "%.2fx" % v
+			save_settings()
+			if settings_changed_callback.is_valid():
+				settings_changed_callback.call()
+		)
 	
 	# Movement tilt
 	var tilt_toggle := CheckButton.new()

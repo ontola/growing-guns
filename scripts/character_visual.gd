@@ -614,6 +614,9 @@ func _attach_weapon_anchor() -> void:
 	# body hierarchy — SLENDERMAN/FLATFISH scale must neither shear nor
 	# stretch the rifle.
 	_hand_frame.top_level = true
+	# Already placed in interpolated space each frame (_update_hand_frame);
+	# interpolating it again would trail it a tick behind.
+	_hand_frame.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
 	attach.add_child(_hand_frame)
 	_weapon_anchor = Node3D.new()
 	_weapon_anchor.name = "WeaponAnchor"
@@ -635,16 +638,22 @@ func _update_hand_frame() -> void:
 	if _hand_frame == null or not is_instance_valid(_hand_frame) or not _hand_frame.is_inside_tree():
 		return
 	var attach := _hand_frame.get_parent() as Node3D
-	var body: Basis = global_transform.basis
+	# The body is drawn where physics interpolation puts it, between ticks,
+	# not at its raw tick transform. These top-level frames are placed by hand
+	# every frame, so place them in that same interpolated space: built from
+	# the raw transform, the gun ran up to a tick ahead of the hands and shook
+	# whenever the player moved fast (the cage drop at spawn most of all).
+	var raw_to_drawn: Transform3D = get_global_transform_interpolated() * global_transform.affine_inverse()
+	var body: Basis = raw_to_drawn.basis * global_transform.basis
 	var s: float = pow(maxf(absf(body.determinant()), 0.000001), 1.0 / 3.0)
 	var rot: Basis = body.orthonormalized() * Basis(Vector3.RIGHT, aim_pitch) * REF_HAND_BASIS
-	_hand_frame.global_transform = Transform3D(rot * s, attach.global_position)
+	_hand_frame.global_transform = Transform3D(rot * s, raw_to_drawn * attach.global_position)
 	if _crest and is_instance_valid(_crest) and _head_attach:
 		# Same trick as the hand: ride the head bone, but stay in body axes
 		# so warped heads and odd bone rolls never tip the crest over.
 		var up: Vector3 = body.orthonormalized().y
 		var crest_basis: Basis = body.orthonormalized() * Basis(Vector3.RIGHT, aim_pitch * 0.5)
-		_crest.global_transform = Transform3D(crest_basis * s, _head_attach.global_position + up * CREST_HEIGHT * s)
+		_crest.global_transform = Transform3D(crest_basis * s, raw_to_drawn * _head_attach.global_position + up * CREST_HEIGHT * s)
 
 
 # Procedural upper-body layer on top of the clips: bends the spine toward the
@@ -743,6 +752,7 @@ func _apply_identity() -> void:
 		_crest = MeshInstance3D.new()
 		_crest.name = "IdentityCrest"
 		_crest.top_level = true
+		_crest.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
 		_crest.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		var box := BoxMesh.new()
 		box.size = Vector3(0.05, 0.1, 0.3)

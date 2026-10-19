@@ -320,10 +320,14 @@ static func _spawn_burst(job: Dictionary) -> void:
 	_live_particles += amount
 	p.tree_exiting.connect(func() -> void: _untrack(p))
 	var cleanup := p.get_tree().create_timer(EMITTER_MAX_AGE_SEC)
+	# A weak reference: the emitter is usually freed long before this fires,
+	# and a lambda holding the node itself logs an error every time it is.
+	var ref: WeakRef = weakref(p)
 	cleanup.timeout.connect(func() -> void:
-		if is_instance_valid(p):
-			_untrack(p)
-			p.queue_free()
+		var live := ref.get_ref() as GPUParticles3D
+		if live:
+			_untrack(live)
+			live.queue_free()
 	)
 	while _live.size() > MAX_LIVE_EMITTERS:
 		_evict_oldest()

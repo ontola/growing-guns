@@ -63,6 +63,7 @@ func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	seat_pads.name = "SeatPads"
 	add_child(seat_pads)
+	MenuHelpers.stick_profiles_provider = seat_pads.local_profiles
 
 	# Start minimized at engine boot, before autoloads or scene loading can
 	# expose a window. Only the shared screen helper handles Start/Resume.

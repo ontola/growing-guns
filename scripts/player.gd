@@ -28,9 +28,10 @@ const GRAVITY := 30.0
 const MOUSE_SENS := 0.0022
 # Max right-stick turn rate (rad/s) at full deflection. Was 4.2 (~240°/s),
 # which Joep found far too twitchy on a couch pad; ~150°/s matches typical
-# console shooters. The response curve below keeps small deflections slow so
-# fine aim stays possible; MenuHelpers.stick_sens_mult scales it per player.
-const CONTROLLER_LOOK_SENS := 2.6
+# console shooters; Joep then asked for a little more (2026-10-19), ~170°/s.
+# The response curve below keeps small deflections slow so fine aim stays
+# possible; MenuHelpers.stick_sens_for scales it per GameNight player.
+const CONTROLLER_LOOK_SENS := 3.0
 const CONTROLLER_LOOK_CURVE := 1.5
 const CONTROLLER_LOOK_DEADZONE := 0.18
 
@@ -1981,7 +1982,8 @@ func _apply_controller_look(delta: float) -> void:
 		if look_input.length() > CONTROLLER_LOOK_DEADZONE:
 			var look_mag := inverse_lerp(CONTROLLER_LOOK_DEADZONE, 1.0, minf(look_input.length(), 1.0))
 			var look_dir := look_input.normalized() * pow(look_mag, CONTROLLER_LOOK_CURVE)
-			var sens := CONTROLLER_LOOK_SENS * MenuHelpers.stick_sens_mult
+			var sens := CONTROLLER_LOOK_SENS * MenuHelpers.stick_sens_for(
+				GameNightBridge.seat_pads.profile_for_device(local_input_device))
 			if is_zooming:
 				sens *= 0.4
 			rotate_y(-look_dir.x * sens * delta)
@@ -4454,7 +4456,10 @@ func enter_spawn_cage(descend: float = 0.0, descend_seconds: float = 2.6) -> voi
 		cage.descend(descend, descend_seconds)
 		if is_multiplayer_authority():
 			# Same curve as SpawnCage.descend — keep trans/ease in sync.
+			# Physics-ticked, like the body it moves: an idle-ticked tween
+			# moves the player between ticks and fights interpolation.
 			_cage_descent_tween = create_tween()
+			_cage_descent_tween.set_process_mode(Tween.TWEEN_PROCESS_PHYSICS)
 			_cage_descent_tween.tween_property(
 				self, "global_position",
 				global_position + Vector3(0.0, -descend, 0.0), descend_seconds) \
