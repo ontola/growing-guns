@@ -575,6 +575,9 @@ func _add_joy_button_action(action: StringName, button_index: int) -> void:
 	if not InputMap.has_action(action):
 		InputMap.add_action(action)
 	var event := InputEventJoypadButton.new()
+	# Every pad, not just device 0 (an InputEvent's default): GameNight's
+	# seats arrive as virtual pads, and a second real pad counts too.
+	event.device = -1
 	event.button_index = button_index
 	if not InputMap.action_has_event(action, event):
 		InputMap.action_add_event(action, event)
@@ -583,6 +586,7 @@ func _add_joy_axis_action(action: StringName, axis: int, axis_value: float) -> v
 	if not InputMap.has_action(action):
 		InputMap.add_action(action)
 	var event := InputEventJoypadMotion.new()
+	event.device = -1
 	event.axis = axis
 	event.axis_value = axis_value
 	if not InputMap.action_has_event(action, event):
@@ -4719,8 +4723,18 @@ func _sync_mouse_mode() -> void:
 
 func _toggle_pause_menu() -> void:
 	if _pause_menu == null:
-		_build_pause_menu()
+		if GameNight.launched_by_daemon:
+			_build_gamenight_pause_menu()
+		else:
+			_build_pause_menu()
 	_pause_menu.visible = not _pause_menu.visible
+	if _pause_menu.visible and GameNight.launched_by_daemon:
+		_refresh_gamenight_pause_menu()
+		_sync_mouse_mode()
+		MenuHelpers.grab_first_menu_focus(_pause_menu)
+		# The whole party is on this couch: Start stops the match for everyone.
+		get_tree().paused = true
+		return
 	if _pause_menu.visible:
 		# Refresh the game-ID field — the iroh server may have come up after
 		# _build_pause_menu ran (host_game_iroh in _ready races with the
@@ -4988,6 +5002,140 @@ func _build_pause_menu() -> void:
 
 	_pause_menu = root
 	_pause_menu.visible = false
+
+
+# Start menu under GameNight. The party is on the couch and online play is the
+# host's business, so it carries no hosting, joining or quitting: just what
+# the party can change in the lobby (mode, bots, the match settings), a way
+# to start over, and personal settings. Resume and New round sit on top.
+var _gn_new_round_btn: Button = null
+var _gn_mode_btn: Button = null
+var _gn_setting_sliders: Dictionary = {}
+const GN_MENU_LABEL_WIDTH := 250.0
+
+func _build_gamenight_pause_menu() -> void:
+	var scaffold := _build_modal_scaffold("PauseMenu", 8)
+	var root: Control = scaffold["root"]
+	var vb: VBoxContainer = scaffold["vb"]
+	var panel := vb.get_parent() as PanelContainer
+	if panel:
+		panel.custom_minimum_size = Vector2(560, 0)
+		# Keep the panel clear of the title above it.
+		var center := panel.get_parent() as Control
+		if center:
+			center.offset_top = 80.0
+
+	var title := _make_menu_title("GROWING GUNS", 42, 6)
+	title.set_anchors_preset(Control.PRESET_CENTER_TOP)
+	title.anchor_left = 0.5
+	title.anchor_right = 0.5
+	title.offset_left = -250.0
+	title.offset_top = 16.0
+	title.offset_right = 250.0
+	title.offset_bottom = 76.0
+	title.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	root.add_child(title)
+
+	var resume := _gn_menu_button("RESUME", _toggle_pause_menu)
+	var shortcut := Shortcut.new()
+	var ev := InputEventAction.new()
+	ev.action = "ui_cancel"
+	shortcut.events.append(ev)
+	resume.shortcut = shortcut
+	vb.add_child(resume)
+	_gn_new_round_btn = _gn_menu_button("NEW ROUND", _gn_new_round)
+	vb.add_child(_gn_new_round_btn)
+	vb.add_child(_gn_menu_button("NEW MATCH", _pause_restart_match))
+
+	_gn_mode_btn = _gn_menu_button("", func() -> void:
+		_pause_change_mode(GAME_MODE_COOP if game_mode == GAME_MODE_VERSUS else GAME_MODE_VERSUS))
+	vb.add_child(_gn_mode_btn)
+
+	var bot_row := HBoxContainer.new()
+	bot_row.add_theme_constant_override("separation", 8)
+	var bot_label := Label.new()
+	bot_label.text = "AI players"
+	bot_label.custom_minimum_size = Vector2(GN_MENU_LABEL_WIDTH, 0)
+	bot_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	bot_label.add_theme_color_override("font_color", Color(0.85, 0.85, 0.95))
+	bot_row.add_child(bot_label)
+	var bot_minus := _gn_menu_button("-", func() -> void:
+		_pause_remove_bot()
+		_refresh_bot_counter.call_deferred())
+	bot_minus.custom_minimum_size = Vector2(44, 32)
+	bot_row.add_child(bot_minus)
+	var bot_count := Label.new()
+	bot_count.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	bot_count.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	bot_count.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	bot_count.add_theme_font_size_override("font_size", 16)
+	bot_count.add_theme_color_override("font_color", Color(1.0, 0.95, 0.78))
+	bot_row.add_child(bot_count)
+	var bot_plus := _gn_menu_button("+", func() -> void:
+		_pause_add_bot()
+		_refresh_bot_counter.call_deferred())
+	bot_plus.custom_minimum_size = Vector2(44, 32)
+	bot_row.add_child(bot_plus)
+	vb.add_child(bot_row)
+	_pause_bot_count_label = bot_count
+	_pause_bot_minus_button = bot_minus
+	_pause_bot_plus_button = bot_plus
+
+	# The party's match settings, the same ones the lobby offers. A change goes
+	# through GameNight, so the phones and the lobby show it too.
+	var settings: RefCounted = GameNightBridge.settings
+	_gn_setting_sliders.clear()
+	for spec: Dictionary in settings.SPECS:
+		var key: String = spec.key
+		var current: int = settings.value(key)
+		var row := _build_slider_row(str(spec.label), current, float(spec.min), float(spec.max), 1.0, str(current))
+		vb.add_child(row["row"])
+		# One label column, so the sliders line up.
+		((row["row"] as Control).get_child(0) as Control).custom_minimum_size.x = GN_MENU_LABEL_WIDTH
+		var slider: HSlider = row["slider"]
+		var value_label: Label = row["value_label"]
+		slider.value_changed.connect(func(v: float) -> void:
+			value_label.text = str(int(v))
+			settings.change(key, int(v))
+			GameNight.set_setting(key, int(v)))
+		_gn_setting_sliders[key] = slider
+
+	vb.add_child(_gn_menu_button("SETTINGS", _open_settings))
+
+	_pause_menu = root
+	_pause_menu.visible = false
+
+
+func _gn_menu_button(text: String, action: Callable) -> Button:
+	var button := Button.new()
+	button.text = text
+	button.custom_minimum_size = Vector2(0, 34)
+	button.pressed.connect(action)
+	return button
+
+
+func _refresh_gamenight_pause_menu() -> void:
+	_refresh_bot_counter()
+	if _gn_mode_btn:
+		_gn_mode_btn.text = "MODE: VERSUS" if game_mode == GAME_MODE_VERSUS else "MODE: WAVE SURVIVAL"
+	if _gn_new_round_btn:
+		# A new round mid card pick or on the results screen would cut those
+		# short; New match covers that.
+		_gn_new_round_btn.disabled = state != State.PLAYING
+	var settings: RefCounted = GameNightBridge.settings
+	for key in _gn_setting_sliders:
+		var slider := _gn_setting_sliders[key] as HSlider
+		slider.set_value_no_signal(settings.value(key))
+		var value_label := slider.get_parent().get_child(slider.get_index() + 1) as Label
+		if value_label:
+			value_label.text = str(settings.value(key))
+
+
+func _gn_new_round() -> void:
+	if state != State.PLAYING or not multiplayer.is_server():
+		return
+	_toggle_pause_menu()
+	_start_round_flashed()
 
 
 # Pause-menu controls — set in _build_pause_menu, used by the action handlers

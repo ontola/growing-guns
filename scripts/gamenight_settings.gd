@@ -31,6 +31,9 @@ func change(key: String, value: Variant) -> bool:
 		return true
 	return false
 
+func value(key: String) -> int:
+	return int(_values.get(key, 0))
+
 func apply_match(game: Node) -> void:
 	# Called only by the authoritative game when starting a new match.
 	game._set_rounds_to_win.rpc(int(_values.rounds_to_win))

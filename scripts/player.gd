@@ -2465,9 +2465,11 @@ func _rifle_fired(
 			game_scene._on_player_shot()
 	var shooter_node: Node3D = _sibling_player(shooter_id)
 	var w: Weapon = shooter_node.weapon if shooter_node else Weapon.new()
-	# `is_self` = the local human is the shooter. Their copy plays a 2D
-	# variant with its own volume curve (no 3D bus reverb / distance shaping).
-	var is_self: bool = shooter_id == multiplayer.get_unique_id()
+	# `is_self` = a human on this machine is the shooter (in splitscreen, any
+	# of them). Their bang plays from the middle with its own volume curve.
+	var is_self: bool = shooter_id == multiplayer.get_unique_id() or (
+		shooter_node != null and not bool(shooter_node.get("is_bot"))
+		and bool(shooter_node.get("split_screen_local")) and shooter_node.is_multiplayer_authority())
 	var silenced: bool = w.silencer_stacks > 0
 	var spawn_shot_fx := true
 	if shooter_node and shooter_node.has_method("_consume_shot_fx_budget"):

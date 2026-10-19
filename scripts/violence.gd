@@ -1123,45 +1123,79 @@ static func _enroll_blood_splat(blob: Node) -> void:
 			old.queue_free()
 
 
+# A wound is a Decal, painted onto the body it sits on. It used to be a small
+# sphere stuck on the skin, which read as a big drop, and on a head it hung
+# right in front of the wounded player's own camera (Joep, 2026-10-19).
 static func _spawn_player_blood_blob(
 	attach_to: Node3D,
 	hit_pos: Vector3,
 	normal: Vector3,
 	strength: float,
-) -> MeshInstance3D:
+) -> Decal:
 	if attach_to == null:
 		return null
-	var blob := MeshInstance3D.new()
-	var mesh := SphereMesh.new()
-	var radius := randf_range(0.05, 0.1) * lerpf(0.95, 1.4, clampf(strength, 0.0, 1.2))
-	mesh.radius = radius
-	mesh.height = radius * 2.0
-	mesh.radial_segments = 6
-	mesh.rings = 4
-	blob.mesh = mesh
-	var mat := StandardMaterial3D.new()
-	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
-	mat.render_priority = 2
-	mat.albedo_color = Color(randf_range(0.2, 0.36), 0.018, 0.012, 1.0)
-	mat.emission_enabled = true
-	mat.emission = Color(0.35, 0.02, 0.015)
-	mat.emission_energy_multiplier = 0.12
-	blob.material_override = mat
-	blob.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	blob.add_to_group("player_blood_wounds")
-	attach_to.add_child(blob)
-	attach_to.move_child(blob, -1)
+	var decal := Decal.new()
+	var size := randf_range(0.13, 0.22) * lerpf(0.95, 1.4, clampf(strength, 0.0, 1.2))
+	# Thin box: deep enough to reach a curved surface, shallow enough not to
+	# paint whatever sits behind it.
+	decal.size = Vector3(size, 0.14, size)
+	decal.texture_albedo = _blood_wound_texture()
+	decal.modulate = Color(randf_range(0.75, 1.0), 1.0, 1.0)
+	decal.albedo_mix = 1.0
+	# Fade on surfaces turned away from the shot instead of smearing along them.
+	decal.normal_fade = 0.35
+	decal.upper_fade = 0.2
+	decal.lower_fade = 0.2
+	# Never onto first-person guns: they hang inside the head's box.
+	decal.cull_mask = 0xfffff & ~RenderPlayer.FP_GUN_LAYER_MASK
+	decal.add_to_group("player_blood_wounds")
+	attach_to.add_child(decal)
+	attach_to.move_child(decal, -1)
 
 	var up := normal.normalized() if normal.length_squared() > 0.001 else Vector3.UP
-	# Sit slightly proud of the skin — embedding caused z-fighting / clipping.
-	blob.global_position = hit_pos + up * radius * randf_range(0.08, 0.22)
-	blob.scale = Vector3(
-		randf_range(0.88, 1.22),
-		randf_range(0.78, 1.12),
-		randf_range(0.88, 1.22),
-	)
-	return blob
+	# A Decal projects along its local -Y: point +Y out of the skin and spin
+	# it at random so neighbouring wounds don't repeat.
+	var side := up.cross(Vector3.UP if absf(up.y) < 0.95 else Vector3.RIGHT).normalized()
+	side = side.rotated(up, randf() * TAU)
+	var basis := Basis(side, up, side.cross(up).normalized())
+	decal.global_transform = Transform3D(basis, hit_pos)
+	return decal
+
+
+static var _blood_wound_tex: ImageTexture = null
+
+# One irregular splat with soft edges and a few droplets, made once.
+static func _blood_wound_texture() -> ImageTexture:
+	if _blood_wound_tex != null:
+		return _blood_wound_tex
+	const N := 64
+	var img := Image.create(N, N, false, Image.FORMAT_RGBA8)
+	var noise := FastNoiseLite.new()
+	noise.seed = 7
+	noise.frequency = 0.09
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 11
+	var drops: Array[Vector3] = []
+	for i in 6:
+		var a := rng.randf() * TAU
+		var r := rng.randf_range(0.45, 0.8)
+		drops.append(Vector3(0.5 + cos(a) * r * 0.5, 0.5 + sin(a) * r * 0.5, rng.randf_range(0.03, 0.07)))
+	for y in N:
+		for x in N:
+			var u := (float(x) + 0.5) / N
+			var v := (float(y) + 0.5) / N
+			var d := Vector2(u - 0.5, v - 0.5).length() * 2.0
+			var edge := 0.55 + noise.get_noise_2d(x, y) * 0.35
+			var a := 1.0 - smoothstep(edge - 0.12, edge, d)
+			for drop in drops:
+				var dd := Vector2(u - drop.x, v - drop.y).length()
+				a = maxf(a, 1.0 - smoothstep(drop.z * 0.6, drop.z, dd))
+			# Darker, thicker middle; brighter wet rim.
+			var shade := lerpf(0.22, 0.42, smoothstep(0.0, edge, d))
+			img.set_pixel(x, y, Color(shade, 0.015, 0.01, a))
+	img.generate_mipmaps()
+	_blood_wound_tex = ImageTexture.create_from_image(img)
+	return _blood_wound_tex
 
 
 static func _spawn_player_blood_cluster(
@@ -1238,7 +1272,7 @@ static func _bone_wound_attachment(skel: Skeleton3D, bone: String) -> BoneAttach
 # Blobs under a BoneAttachment3D inherit the skeleton's world scale (FBX rigs
 # are often not unit-scale); divide it back out so wounds render at the same
 # world size as on the blob body. Tags the blob for corpse transfer.
-static func _fit_knight_wound_blob(blob: MeshInstance3D, attach: BoneAttachment3D) -> void:
+static func _fit_knight_wound_blob(blob: Node3D, attach: BoneAttachment3D) -> void:
 	if blob == null or attach == null:
 		return
 	var ps: Vector3 = attach.global_transform.basis.get_scale()
@@ -1262,14 +1296,14 @@ static func _transfer_knight_wounds(player: Node, corpse_root: Node3D) -> void:
 	var skel := corpse_root.find_child("Skeleton3D", true, false) as Skeleton3D
 	if skel != null:
 		for w in wounds:
-			if not (w is MeshInstance3D) or not is_instance_valid(w):
+			if not (w is Node3D) or not is_instance_valid(w):
 				continue
-			var blob := w as MeshInstance3D
+			var blob := w as Node3D
 			var bone: String = str(blob.get_meta("wound_bone", ""))
 			if bone == "":
 				continue
 			var att := _bone_wound_attachment(skel, bone)
-			var copy := blob.duplicate() as MeshInstance3D
+			var copy := blob.duplicate() as Node3D
 			att.add_child(copy)
 			copy.transform = blob.transform
 	clear_player_blood_wounds(player)

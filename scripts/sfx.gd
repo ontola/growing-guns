@@ -355,7 +355,7 @@ func _samples_to_wav(samples: PackedVector2Array) -> AudioStreamWAV:
 	wav.data = data
 	return wav
 
-func _play(samples: PackedVector2Array, volume_db: float = -6.0, at: Vector3 = NO_POS, debug_label: String = "", attenuation_dist: float = -1.0, dry: bool = false, priority_db_spl: float = 80.0, big_tail: bool = true) -> Node:
+func _play(samples: PackedVector2Array, volume_db: float = -6.0, at: Vector3 = NO_POS, debug_label: String = "", attenuation_dist: float = -1.0, dry: bool = false, priority_db_spl: float = 80.0, big_tail: bool = true, center: bool = false) -> Node:
 	if _solo_blocks(debug_label):
 		return null
 	if _hdr_blocks(priority_db_spl, debug_label):
@@ -366,7 +366,7 @@ func _play(samples: PackedVector2Array, volume_db: float = -6.0, at: Vector3 = N
 	# Empty label avoids a second log line via _play_stream's own logger.
 	# The empty label also skips the HDR gate inside _play_stream — already
 	# admitted here, don't double-count.
-	return _play_stream(_samples_to_wav(samples), volume_db, at, 1.0, "", attenuation_dist, dry, priority_db_spl, big_tail)
+	return _play_stream(_samples_to_wav(samples), volume_db, at, 1.0, "", attenuation_dist, dry, priority_db_spl, big_tail, center)
 
 # Empty `label` is treated as a forwarded inner call (already gated upstream).
 # Leading `_` means "wet companion" — silent in the log but still solo-gated by
@@ -384,7 +384,7 @@ func _solo_blocks(label: String) -> bool:
 # filter, no reverb). Use for sharp transients that should hit clean.
 # `priority_db_spl`: real-world SPL approximation for HDR gating. See
 # _hdr_blocks() — sounds below `max_spl - HDR_WINDOW_DB` are culled.
-func _play_stream(stream: AudioStream, volume_db: float = -6.0, at: Vector3 = NO_POS, pitch_scale: float = 1.0, debug_label: String = "", attenuation_dist: float = -1.0, dry: bool = false, priority_db_spl: float = 80.0, big_tail: bool = true) -> Node:
+func _play_stream(stream: AudioStream, volume_db: float = -6.0, at: Vector3 = NO_POS, pitch_scale: float = 1.0, debug_label: String = "", attenuation_dist: float = -1.0, dry: bool = false, priority_db_spl: float = 80.0, big_tail: bool = true, center: bool = false) -> Node:
 	if _solo_blocks(debug_label):
 		return null
 	if _hdr_blocks(priority_db_spl, debug_label):
@@ -404,6 +404,11 @@ func _play_stream(stream: AudioStream, volume_db: float = -6.0, at: Vector3 = NO
 		p.stream = stream
 		p.volume_db = volume_db
 		p.pitch_scale = pitch_scale
+		# 2D already plays equally left and right: the middle on stereo. With
+		# a centre speaker, put it there. (Only then: on stereo output Godot
+		# has no centre channel and a centre-targeted sound is silent.)
+		if center and AudioServer.get_speaker_mode() != AudioServer.SPEAKER_MODE_STEREO:
+			p.mix_target = AudioStreamPlayer.MIX_TARGET_CENTER
 		add_child(p)
 		p.play()
 		var life_2d: float = stream.get_length() / maxf(0.1, pitch_scale) + 0.15
@@ -670,14 +675,19 @@ func shot(w: Weapon = null, at: Vector3 = NO_POS, is_self: bool = false, silence
 	ProceduralMusic.duck(0.18 + clampf(dmg_log * 0.08, 0.0, 0.32))
 	# Wet companion uses "_<label>" — silent in the log, still solo-gated.
 	var wet_label := "_" + label
+	# Your own bang comes from the middle (the centre speaker in 5.1), not
+	# from the muzzle: the muzzle sits off to one side of the listener, so
+	# strafing used to throw your own shots into the left or right speaker
+	# (Joep, 2026-10-19). The quieter wet copy stays in the room for the tail.
+	var dry_at: Vector3 = NO_POS if is_self else at
 	if not _gun_sounds.is_empty():
 		var stream: AudioStream = _gun_sounds.pick_random()
-		_play_stream(stream, dry_vol, at, pitch, label, shot_dist, true, spl)
+		_play_stream(stream, dry_vol, dry_at, pitch, label, shot_dist, true, spl, true, is_self)
 		_play_stream(stream, wet_vol, at, pitch, wet_label, shot_dist, false, spl)
 	else:
 		var key := _shot_cache_key(w, shot_variant, last_in_mag)
 		var wav := _cached_wav(key, Callable(self, "_synth_shot").bind(w, shot_variant))
-		_play_stream(wav, dry_vol, at, pitch, label, shot_dist, true, spl)
+		_play_stream(wav, dry_vol, dry_at, pitch, label, shot_dist, true, spl, true, is_self)
 		_play_stream(wav, wet_vol, at, pitch, wet_label, shot_dist, false, spl)
 	# Rumble layer — only for hard-hitting weapons (>1.4× base damage). Reuses
 	# the explosion rumble synth + cache (same brown-noise body) but at a much
@@ -691,7 +701,7 @@ func shot(w: Weapon = null, at: Vector3 = NO_POS, is_self: bool = false, silence
 			var rumble_key := "explosion_rumble:%d:%d" % [rumble_radius, rumble_variant]
 			var rumble_dist: float = clampf(float(rumble_radius) * 0.8, 4.0, 12.0)
 			_play(_cached_samples(rumble_key, Callable(self, "_synth_explosion_rumble").bind(float(rumble_radius), rumble_variant)),
-				shot_rumble_db, at, "shot_rumble", rumble_dist, false, spl)
+				shot_rumble_db, dry_at, "shot_rumble", rumble_dist, false, spl, true, is_self)
 func grenade_launch(at: Vector3 = NO_POS) -> void:
 	var variant := randi() % 5
 	var key := "grenade_launch:%d" % variant

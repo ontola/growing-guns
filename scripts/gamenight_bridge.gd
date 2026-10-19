@@ -258,6 +258,10 @@ func _on_started(session_id: String) -> void:
 	# a player short.
 	_bind_gamenight_seats()
 	var game := get_tree().current_scene
+	# Warming happened in a minimised window, which never drew the effect
+	# warmup: compile those pipelines now, behind the cage descent.
+	if game:
+		ShaderWarmup.rewarm_on_screen(game)
 	if game and game.has_method("_open_gamenight_start_gate"):
 		game._open_gamenight_start_gate()
 

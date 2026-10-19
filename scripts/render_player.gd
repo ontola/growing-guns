@@ -1110,39 +1110,49 @@ func _scale_card(card: Control, scale: float) -> void:
 				(s as Label).add_theme_font_size_override("font_size", stat_size)
 
 
+## One holo shader for every card, built once. A fresh Shader per card made
+## each card pick compile it again on the main thread, mid-match.
+static var _holo_shader: Shader = null
+
+static func holo_shader() -> Shader:
+	if _holo_shader == null:
+		_holo_shader = Shader.new()
+		_holo_shader.code = "
+			shader_type canvas_item;
+			render_mode blend_add;
+			uniform sampler2D gradient : source_color;
+			uniform float speed = 0.5;
+			uniform float angle = 0.5;
+			uniform float intensity = 0.16;
+			uniform vec2 card_size = vec2(200.0, 280.0);
+			uniform float corner_radius = 12.0;
+
+			void fragment() {
+				vec2 uv = UV;
+				float s = sin(angle);
+				float c = cos(angle);
+				vec2 rot_uv = vec2(uv.x * c - uv.y * s, uv.x * s + uv.y * c);
+				float pos = fract(rot_uv.x * 1.5 + TIME * speed);
+				vec4 holo_color = texture(gradient, vec2(pos, 0.5));
+				float noise = fract(sin(dot(uv, vec2(12.9898, 78.233))) * 43758.5453);
+				holo_color.rgb += noise * 0.15;
+				vec2 px = uv * card_size;
+				vec2 d = max(vec2(0.0), abs(px - card_size * 0.5) - (card_size * 0.5 - corner_radius));
+				float dist = length(d) - corner_radius;
+				float mask = smoothstep(1.0, -1.0, dist);
+				COLOR = vec4(holo_color.rgb * intensity * mask, 1.0);
+			}
+		"
+	return _holo_shader
+
+
 func _add_holo_overlay(panel: Control, style: StyleBoxFlat) -> void:
 	var tw_border := panel.create_tween().set_loops()
 	tw_border.tween_property(style, "border_color", Color(0.6, 0.9, 1.0), 1.8)
 	tw_border.tween_property(style, "border_color", Color(0.9, 0.6, 1.0), 1.8)
-	var holo_shader := Shader.new()
-	holo_shader.code = "
-		shader_type canvas_item;
-		render_mode blend_add;
-		uniform sampler2D gradient : source_color;
-		uniform float speed = 0.5;
-		uniform float angle = 0.5;
-		uniform float intensity = 0.16;
-		uniform vec2 card_size = vec2(200.0, 280.0);
-		uniform float corner_radius = 12.0;
-
-		void fragment() {
-			vec2 uv = UV;
-			float s = sin(angle);
-			float c = cos(angle);
-			vec2 rot_uv = vec2(uv.x * c - uv.y * s, uv.x * s + uv.y * c);
-			float pos = fract(rot_uv.x * 1.5 + TIME * speed);
-			vec4 holo_color = texture(gradient, vec2(pos, 0.5));
-			float noise = fract(sin(dot(uv, vec2(12.9898, 78.233))) * 43758.5453);
-			holo_color.rgb += noise * 0.15;
-			vec2 px = uv * card_size;
-			vec2 d = max(vec2(0.0), abs(px - card_size * 0.5) - (card_size * 0.5 - corner_radius));
-			float dist = length(d) - corner_radius;
-			float mask = smoothstep(1.0, -1.0, dist);
-			COLOR = vec4(holo_color.rgb * intensity * mask, 1.0);
-		}
-	"
+	var shader := holo_shader()
 	var holo_mat := ShaderMaterial.new()
-	holo_mat.shader = holo_shader
+	holo_mat.shader = shader
 	var grad := Gradient.new()
 	grad.set_offsets(PackedFloat32Array([0.0, 0.25, 0.5, 0.75, 1.0]))
 	grad.set_colors(PackedColorArray([

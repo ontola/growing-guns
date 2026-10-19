@@ -42,9 +42,47 @@ static func warmup_effect_shaders(scene_root: Node, force_draw: bool = true) -> 
 	GpuDebris.warmup(scene_root)
 	arena_gen.warmup_gpu_materials(scene_root)
 	_warmup_gun_growth(scene_root)
+	_warmup_card_holo(scene_root)
 	if force_draw and DisplayServer.get_name() != "headless":
 		RenderingServer.force_draw(true)
 	Trace.span_end("shader_warmup (session)")
+
+
+# GameNight warms the match minimised, and a minimised window draws nothing:
+# the warmup above built every effect, but no frame ever drew them, so their
+# pipelines still compiled mid-match on first use (a headshot's gore, the
+# card pick). Run it again on the first frames the party actually sees, while
+# the cages are still lowering everyone in.
+static var _rewarmed_on_screen := false
+
+static func rewarm_on_screen(scene_root: Node) -> void:
+	if _rewarmed_on_screen:
+		return  # pipelines stay compiled for the rest of the process
+	_rewarmed_on_screen = true
+	# Give the window a moment to come back from minimised first.
+	await scene_root.get_tree().create_timer(0.3).timeout
+	if not is_instance_valid(scene_root) or not scene_root.is_inside_tree():
+		_rewarmed_on_screen = false
+		return
+	effect_shaders_warmed = false
+	warmup_effect_shaders(scene_root)
+
+
+# The card pick's holo sheen is a canvas shader drawn over every card. Draw
+# it once, one pixel, nearly transparent, so the first pick doesn't compile it.
+static func _warmup_card_holo(scene_root: Node) -> void:
+	var layer := CanvasLayer.new()
+	layer.name = "CardHoloWarmup"
+	scene_root.add_child(layer)
+	var rect := ColorRect.new()
+	rect.size = Vector2.ONE
+	rect.modulate.a = 0.01
+	rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var mat := ShaderMaterial.new()
+	mat.shader = RenderPlayer.holo_shader()
+	rect.material = mat
+	layer.add_child(rect)
+	scene_root.get_tree().create_timer(0.6).timeout.connect(layer.queue_free)
 
 
 # The living-gun growth (gun_flesh.gdshader + bone/eye materials) only exists
