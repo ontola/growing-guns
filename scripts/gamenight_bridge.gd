@@ -10,6 +10,8 @@ extends Node
 ## this process with GAMENIGHT=1.
 
 var settings := preload("res://scripts/gamenight_settings.gd").new()
+## The party's controllers, replayed as one Godot joypad per local seat.
+var seat_pads := preload("res://scripts/seat_pads.gd").new()
 
 const GAME_SCENE := "res://scenes/game.tscn"
 const START_SCENE := "res://scenes/start_screen.tscn"
@@ -59,6 +61,8 @@ func _ready() -> void:
 	# Without that the game pauses itself and never hears the `start` that
 	# would unpause it.
 	process_mode = Node.PROCESS_MODE_ALWAYS
+	seat_pads.name = "SeatPads"
+	add_child(seat_pads)
 
 	# Start minimized at engine boot, before autoloads or scene loading can
 	# expose a window. Only the shared screen helper handles Start/Resume.
@@ -192,12 +196,9 @@ func _report_arena_progress(session_id: String) -> void:
 ## lobby already knows who is playing, and a second way in (the game's own
 ## "press X to join") only lets the two disagree.
 ##
-## Done at `start` rather than at `prepare` because this is where the pads
-## actually are. Warming happens minimised and unfocused, and a pad that
-## connects — or is picked up — while the party is still in the lobby isn't
-## necessarily enumerated for us yet. Binding early got seat 1 the
-## keyboard/mouse "device" as a fallback, which on the host means the same
-## mouse turning both players' heads.
+## Done at `start` rather than at `prepare`: the party can still swap
+## controllers in the lobby while we warm, and the seats we bind here are the
+## ones the match opens with.
 func _bind_gamenight_seats() -> void:
 	if _local_seat_count <= 0:
 		return
@@ -207,7 +208,9 @@ func _bind_gamenight_seats() -> void:
 	var splitscreen: Node = game.get("_splitscreen")
 	if splitscreen == null or not splitscreen.has_method("bind_seats"):
 		return
-	var devices := GameNight.devices_for_local_seats(_local_seat_count)
+	# GameNight owns the pads: a seat names a host controller, not a Godot
+	# joystick, so each seat drives a virtual pad fed from the host's stream.
+	var devices := seat_pads.bind(_pending_seats)
 	if _local_seat_count >= 2:
 		splitscreen.bind_seats(devices)
 	elif not devices.is_empty():
@@ -297,6 +300,7 @@ func _on_disposed(session_id: String) -> void:
 		return
 	current_session_id = ""
 	_local_seat_count = 0
+	seat_pads.bind([])
 	# Unpause before swapping scenes: the next `prepare` pauses again once it
 	# has finished loading, and a scene change into a paused tree would never
 	# get the frames it needs to load at all.
