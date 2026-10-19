@@ -4796,13 +4796,12 @@ func _build_modal_scaffold(node_name: String, vb_separation: int) -> Dictionary:
 func _menu_panel_style() -> StyleBoxFlat:
 	return MenuHelpers.menu_panel_style()
 
-func _make_menu_title(text: String, font_size: int, outline_size: int) -> Label:
+## Menu titles in the Arena poster face. `_outline_size` dates from the old
+## outlined titles; the red drop shadow scales with `font_size` instead.
+func _make_menu_title(text: String, font_size: int, _outline_size: int) -> Label:
 	var title := Label.new()
 	title.text = text
-	title.add_theme_font_size_override("font_size", font_size)
-	title.add_theme_color_override("font_color", Color(1, 0.9, 0.45))
-	title.add_theme_color_override("font_outline_color", Color(0.4, 0.0, 0.1))
-	title.add_theme_constant_override("outline_size", outline_size)
+	UiStyle.display_label(title, int(round(font_size * 1.25)))
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	return title
 
@@ -5041,10 +5040,16 @@ func _build_gamenight_pause_menu() -> void:
 	var bot_row := HBoxContainer.new()
 	bot_row.add_theme_constant_override("separation", 8)
 	var bot_label := Label.new()
-	bot_label.text = "AI players"
+	bot_label.text = "AI PLAYERS"
 	bot_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	bot_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	bot_label.add_theme_color_override("font_color", Color(0.85, 0.85, 0.95))
+	# Lined up with the button text beside it: same face, same inset.
+	bot_label.add_theme_font_override("font", UiStyle.BOLD)
+	bot_label.add_theme_font_size_override("font_size", 22)
+	bot_label.add_theme_color_override("font_color", UiStyle.BONE_DIM)
+	var inset := StyleBoxEmpty.new()
+	inset.content_margin_left = 14
+	bot_label.add_theme_stylebox_override("normal", inset)
 	bot_row.add_child(bot_label)
 	var bot_minus := _gn_menu_button("-", func() -> void:
 		_pause_remove_bot()
@@ -5055,8 +5060,7 @@ func _build_gamenight_pause_menu() -> void:
 	bot_count.custom_minimum_size = Vector2(44, 0)
 	bot_count.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	bot_count.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	bot_count.add_theme_font_size_override("font_size", 16)
-	bot_count.add_theme_color_override("font_color", Color(1.0, 0.95, 0.78))
+	UiStyle.display_label(bot_count, 24, 2)
 	bot_row.add_child(bot_count)
 	var bot_plus := _gn_menu_button("+", func() -> void:
 		_pause_add_bot()
@@ -5081,9 +5085,9 @@ func _gn_menu_title() -> Label:
 	title.anchor_left = 0.5
 	title.anchor_right = 0.5
 	title.offset_left = -250.0
-	title.offset_top = 16.0
+	title.offset_top = 10.0
 	title.offset_right = 250.0
-	title.offset_bottom = 76.0
+	title.offset_bottom = 82.0
 	title.grow_horizontal = Control.GROW_DIRECTION_BOTH
 	return title
 
@@ -5145,7 +5149,8 @@ func _gn_close_advanced() -> void:
 func _gn_menu_button(text: String, action: Callable) -> Button:
 	var button := Button.new()
 	button.text = text
-	button.custom_minimum_size = Vector2(0, 34)
+	button.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	button.custom_minimum_size = Vector2(0, 38)
 	button.pressed.connect(action)
 	return button
 

@@ -349,8 +349,8 @@ func layout_for_size(view_size: Vector2) -> void:
 	_apply_render_size(view_size)
 	var scale: float = clampf(minf(view_size.x / 960.0, view_size.y / 540.0), 0.58, 1.0)
 	var margin := roundf(14.0 * scale)
-	var font_big := maxi(13, int(round(22.0 * scale)))
-	var font_small := maxi(11, int(round(16.0 * scale)))
+	var font_big := maxi(16, int(round(28.0 * scale)))
+	var font_small := maxi(13, int(round(19.0 * scale)))
 
 	# Retro/fisheye compensation. The shader bows the image outward, so HUD
 	# elements need to be pulled toward center to land where they should after
@@ -373,8 +373,8 @@ func layout_for_size(view_size: Vector2) -> void:
 	crosshair.set("line_length", maxf(5.0, 8.0 * scale))
 	crosshair.set("base_gap", maxf(3.0, 4.0 * scale))
 
-	var panel_h := 30.0 * scale
-	var y := view_size.y - margin - 32.0 * scale
+	var panel_h := 36.0 * scale
+	var y := view_size.y - margin - 38.0 * scale
 	for item in [
 		{"node": _hud.hp_panel, "x": -290.0, "w": 130.0, "font": font_big},
 		{"node": _hud.ammo_panel, "x": -140.0, "w": 130.0, "font": font_big},
@@ -397,16 +397,6 @@ func layout_for_size(view_size: Vector2) -> void:
 		# Y: bottom edge gets pushed down by fisheye, so move upward (negative offset)
 		panel.offset_top = y - fisheye_y_offset
 		panel.offset_bottom = y + panel_h - fisheye_y_offset
-
-	if _hud_bar:
-		var bar_pad := 10.0 * scale
-		var bar_x := 290.0 * scale * (1.0 - fisheye_pull_x) + bar_pad
-		_hud_bar.anchor_left = 0.5
-		_hud_bar.anchor_right = 0.5
-		_hud_bar.offset_left = -bar_x
-		_hud_bar.offset_right = bar_x
-		_hud_bar.offset_top = y - fisheye_y_offset - bar_pad * 0.6
-		_hud_bar.offset_bottom = y + panel_h - fisheye_y_offset + bar_pad * 0.6
 
 	var revive_label: Label = _hud.get("revive_panel") as Label
 	if revive_label:
@@ -438,17 +428,12 @@ const CARD_SCALE_MAX := 1.5
 
 
 var _layout_size := Vector2.ZERO
-var _hud_bar: Panel = null
 
 
-static func _hud_plate_style(radius: int) -> StyleBoxFlat:
-	var style := StyleBoxFlat.new()
-	style.bg_color = Color(0.04, 0.04, 0.06, 0.58)
-	style.border_color = Color(1.0, 1.0, 1.0, 0.10)
-	style.set_border_width_all(1)
-	style.set_corner_radius_all(radius)
-	style.anti_aliasing = true
-	return style
+## The Arena plate behind HUD numbers and toasts. `_radius` is left over from
+## the rounded plates and no longer used.
+static func _hud_plate_style(_radius: int) -> StyleBoxFlat:
+	return UiStyle.plate(UiStyle.PLATE, true, Vector2(16, 6))
 
 
 # Render the view at the window's real pixel count. The project stretches
@@ -502,24 +487,30 @@ func _build() -> void:
 	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hud_layer.add_child(root)
 
-	# One shared backing plate under the bottom row, so the numbers read as a
-	# HUD instead of loose text floating over bright lava and sky.
-	_hud_bar = Panel.new()
-	_hud_bar.name = "HudBar"
-	_hud_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_hud_bar.z_index = 9
-	_hud_bar.add_theme_stylebox_override("panel", _hud_plate_style(10))
-	root.add_child(_hud_bar)
 	var hp_panel := _build_hp_panel()
 	root.add_child(hp_panel)
-	var ammo_panel := _build_value_panel(HUD_ICON_SCRIPT.Type.LMB, Color(1.0, 0.94, 0.62))
+	var ammo_panel := _build_value_panel(HUD_ICON_SCRIPT.Type.LMB, UiStyle.BONE)
 	root.add_child(ammo_panel)
-	var special_panel := _build_value_panel(HUD_ICON_SCRIPT.Type.RMB, Color(0.7, 1.0, 0.55))
+	var special_panel := _build_value_panel(HUD_ICON_SCRIPT.Type.RMB, UiStyle.BONE)
+	(special_panel.get_node("BarFill") as ColorRect).color = UiStyle.RED
 	root.add_child(special_panel)
 	var dash_panel := _build_dash_panel()
 	root.add_child(dash_panel)
-	for panel in [hp_panel, ammo_panel, special_panel, dash_panel]:
+	# Each panel stands on its own slanted plate, so the numbers read as a HUD
+	# instead of loose text floating over bright lava and sky.
+	for panel: Control in [hp_panel, ammo_panel, special_panel, dash_panel]:
 		panel.z_index = 10
+		var plate := Panel.new()
+		plate.name = "Plate"
+		plate.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		plate.add_theme_stylebox_override("panel", UiStyle.plate())
+		plate.set_anchors_preset(Control.PRESET_FULL_RECT)
+		plate.offset_left = -10.0
+		plate.offset_right = 6.0
+		plate.offset_top = -4.0
+		plate.offset_bottom = 4.0
+		panel.add_child(plate)
+		panel.move_child(plate, 0)
 
 	_flare_overlay = LENS_FLARE_OVERLAY_SCRIPT.new()
 	_flare_overlay.name = "LensFlareOverlay"
@@ -615,10 +606,7 @@ func _build() -> void:
 	round_win.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
 	round_win.offset_top = 8.0
 	round_win.offset_bottom = 56.0
-	round_win.add_theme_font_size_override("font_size", 28)
-	round_win.add_theme_color_override("font_color", Color(1.0, 0.92, 0.42))
-	round_win.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.95))
-	round_win.add_theme_constant_override("outline_size", 7)
+	UiStyle.display_label(round_win, 30, 3)
 	root.add_child(round_win)
 
 	var revive_panel := _build_revive_panel()
@@ -724,7 +712,7 @@ func _build_hp_panel() -> Control:
 	cross.name = "Cross"
 	cross.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	panel.add_child(cross)
-	var label := _label(Color(1.0, 0.95, 0.82))
+	var label := _hud_number_label(UiStyle.BONE)
 	label.name = "Label"
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
@@ -743,7 +731,8 @@ func _build_value_panel(icon_type: int, text_color: Color) -> Control:
 	icon.set_script(HUD_ICON_SCRIPT)
 	icon.set("icon_type", icon_type)
 	panel.add_child(icon)
-	var label := _label(text_color)
+	icon.set("icon_color", text_color)
+	var label := _hud_number_label(text_color)
 	label.name = "Label"
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
@@ -791,8 +780,9 @@ func _build_dash_panel() -> Control:
 	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	icon.set_script(HUD_ICON_SCRIPT)
 	icon.set("icon_type", HUD_ICON_SCRIPT.Type.SHIFT)
+	icon.set("icon_color", UiStyle.BONE)
 	panel.add_child(icon)
-	var dash_color := Color(0.65, 0.9, 1.0)
+	var dash_color := UiStyle.BONE
 	for i in 2:
 		var bg := ColorRect.new()
 		bg.name = "Bar%dBg" % i
@@ -807,23 +797,24 @@ func _build_dash_panel() -> Control:
 	return panel
 
 
-# Inner class that just draws a thick "+" cross using the panel-anchored size.
+# Inner class that draws the health heart using the panel-anchored size.
 class CrossDraw extends Control:
-	var cross_color: Color = Color(1.0, 0.35, 0.35)
+	var cross_color: Color = UiStyle.RED
 	func set_cross_color(c: Color) -> void:
 		if c == cross_color:
 			return
 		cross_color = c
 		queue_redraw()
 	func _draw() -> void:
-		var thick: float = size.x * 0.34
-		var horizontal := Rect2(0, (size.y - thick) * 0.5, size.x, thick)
-		var vertical := Rect2((size.x - thick) * 0.5, 0, thick, size.y)
-		draw_rect(horizontal, cross_color, true)
-		draw_rect(vertical, cross_color, true)
-		# Outline so the cross stays readable against bright surfaces.
-		draw_rect(horizontal, Color(0, 0, 0, 0.85), false, 1.5)
-		draw_rect(vertical, Color(0, 0, 0, 0.85), false, 1.5)
+		UiStyle.draw_heart(self, Rect2(Vector2.ZERO, size), cross_color)
+
+
+## Big HUD numbers: the poster face, with a thin dark edge for bright skies.
+func _hud_number_label(color: Color) -> Label:
+	var label := _label(color)
+	label.add_theme_font_override("font", UiStyle.DISPLAY)
+	label.add_theme_constant_override("outline_size", 3)
+	return label
 
 
 func _build_card_overlay(root: Control) -> Dictionary:
@@ -846,7 +837,8 @@ func _build_card_overlay(root: Control) -> Dictionary:
 	vb.alignment = BoxContainer.ALIGNMENT_CENTER
 	vb.add_theme_constant_override("separation", 12)
 	center.add_child(vb)
-	var title := _label(Color(1.0, 0.9, 0.45))
+	var title := Label.new()
+	UiStyle.display_label(title, 24)
 	title.text = "PICK A CARD"
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	vb.add_child(title)
@@ -895,12 +887,16 @@ func _make_card(card_id: String, card: Dictionary, index: int) -> Control:
 		sb.shadow_color = Color(0.4, 0.6, 1.0, 0.4)
 		sb.shadow_size = 25
 	else:
-		sb.bg_color = Color(col.r * 0.15, col.g * 0.15, col.b * 0.15, 0.96)
-		sb.border_color = col.lerp(Color.WHITE, 0.2)
+		# Arena: near-black with a hint of the card's colour, which also runs
+		# down the thick left edge like the HUD plates' red one.
+		sb.bg_color = UiStyle.INK.lerp(col, 0.1)
+		sb.bg_color.a = 0.97
+		sb.border_color = col.lerp(UiStyle.BONE, 0.15)
 		sb.shadow_color = Color(0, 0, 0, 0.3)
 		sb.shadow_size = 8
-	sb.set_border_width_all(3)
-	sb.set_corner_radius_all(12)
+	sb.set_border_width_all(2)
+	sb.border_width_left = 7
+	sb.set_corner_radius_all(2)
 	panel.add_theme_stylebox_override("panel", sb)
 
 	var vb := VBoxContainer.new()
@@ -911,19 +907,20 @@ func _make_card(card_id: String, card: Dictionary, index: int) -> Control:
 	panel.add_child(vb)
 	root.set_meta("content", vb)
 
-	var title := _label(Color.WHITE)
+	var title := Label.new()
+	UiStyle.display_label(title, 22, 2)
 	title.text = str(card.get("name", card_id)).to_upper()
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	title.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	title.add_theme_font_size_override("font_size", 18)
 	vb.add_child(title)
 	root.set_meta("title_label", title)
 
-	var desc := _label(Color(0.9, 0.9, 0.9))
+	var desc := _label(UiStyle.BONE)
+	desc.add_theme_constant_override("outline_size", 0)
 	desc.text = HUD_ICON_SCRIPT.prompt_text(str(card.get("desc", "")), uses_controller())
 	desc.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	desc.add_theme_font_size_override("font_size", 14)
+	desc.add_theme_font_size_override("font_size", 16)
 	vb.add_child(desc)
 	root.set_meta("desc_label", desc)
 
@@ -932,7 +929,7 @@ func _make_card(card_id: String, card: Dictionary, index: int) -> Control:
 	vb.add_child(stats_vbox)
 	root.set_meta("stats_vbox", stats_vbox)
 	for diff_line in _card_stat_diff(card_id):
-		var slbl := _label(Color(0.75, 0.85, 1.0, 0.85))
+		var slbl := _label(UiStyle.BONE_DIM)
 		slbl.text = diff_line
 		slbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		slbl.add_theme_font_size_override("font_size", 12)
@@ -979,9 +976,11 @@ func _make_card(card_id: String, card: Dictionary, index: int) -> Control:
 
 	var front_style := sb
 	var back_style := StyleBoxFlat.new()
-	back_style.bg_color = Color(0.12, 0.12, 0.15, 1.0)
-	back_style.border_color = Color(0.3, 0.3, 0.4)
-	back_style.set_corner_radius_all(12)
+	back_style.bg_color = UiStyle.INK
+	back_style.border_color = UiStyle.RED_DARK
+	back_style.set_border_width_all(2)
+	back_style.border_width_left = 7
+	back_style.set_corner_radius_all(2)
 	panel.add_theme_stylebox_override("panel", back_style)
 	panel.position.y = 400.0
 	panel.scale.x = 0.001
@@ -1098,10 +1097,10 @@ func _scale_card(card: Control, scale: float) -> void:
 	# render with tiny ones. Base sizes match the values used in _make_card.
 	var title := card.get_meta("title_label") as Label
 	if title:
-		title.add_theme_font_size_override("font_size", maxi(10, int(round(18.0 * scale))))
+		title.add_theme_font_size_override("font_size", maxi(12, int(round(22.0 * scale))))
 	var desc := card.get_meta("desc_label") as Label
 	if desc:
-		desc.add_theme_font_size_override("font_size", maxi(9, int(round(14.0 * scale))))
+		desc.add_theme_font_size_override("font_size", maxi(10, int(round(16.0 * scale))))
 	var stats := card.get_meta("stats_vbox") as VBoxContainer
 	if stats:
 		var stat_size: int = maxi(8, int(round(12.0 * scale)))
@@ -1280,7 +1279,7 @@ func _layout_hp_panel(player: Node, is_ghost: bool) -> void:
 	var cross_size: float = h * 0.85
 	cross.position = Vector2(0.0, (h - cross_size) * 0.5)
 	cross.size = Vector2(cross_size, cross_size)
-	cross.set_cross_color(Color(0.65, 0.85, 1.0) if is_ghost else Color(1.0, 0.35, 0.35))
+	cross.set_cross_color(Color(0.65, 0.85, 1.0) if is_ghost else UiStyle.RED)
 	var label_x: float = cross_size + 8.0
 	label.position = Vector2(label_x, 0.0)
 	label.size = Vector2(maxf(0.0, w - label_x), h)

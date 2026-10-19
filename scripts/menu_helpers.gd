@@ -27,16 +27,7 @@ static var player_name_committed_callback: Callable
 
 # Styling used for premium flat/glassmorphic panels
 static func menu_panel_style() -> StyleBoxFlat:
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color(0.08, 0.08, 0.1, 0.95)
-	sb.border_color = Color(0.35, 0.7, 1.0)
-	sb.set_border_width_all(2)
-	sb.set_corner_radius_all(8)
-	sb.content_margin_left = 24
-	sb.content_margin_right = 24
-	sb.content_margin_top = 22
-	sb.content_margin_bottom = 22
-	return sb
+	return UiStyle.menu_panel()
 
 # Build slider row helper
 static func build_slider_row(label_text: String, value: float, min_val: float, max_val: float, step: float, value_text: String) -> Dictionary:

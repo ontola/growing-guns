@@ -50,10 +50,7 @@ static func apply_settings_panel(panel: PanelContainer) -> void:
 static func _style_title(title: Label) -> void:
 	if title == null:
 		return
-	title.add_theme_font_size_override("font_size", TITLE_FONT_SIZE)
-	title.add_theme_color_override("font_color", Color(0.98, 0.82, 0.38))
-	title.add_theme_color_override("font_outline_color", TITLE_OUTLINE)
-	title.add_theme_constant_override("outline_size", 7)
+	UiStyle.display_label(title, 60)
 
 
 static func _style_menu_tree(root: Node) -> void:

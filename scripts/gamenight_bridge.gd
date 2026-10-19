@@ -40,6 +40,9 @@ var _local_seat_count: int = 0
 
 
 func _ready() -> void:
+	# Autoloads come up before any scene, so every menu and HUD gets the Arena
+	# fonts and button plates from the first frame.
+	UiStyle.install()
 	# Fallback game id for standalone runs / before the daemon's env override
 	# is read. GameNight._ready() already applied GAMENIGHT_GAME_ID if the
 	# daemon set one — don't clobber that.
