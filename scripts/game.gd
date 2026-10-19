@@ -763,6 +763,10 @@ func _handle_global_cancel_or_pause(event: InputEvent) -> bool:
 		event is InputEventJoypadButton and event.pressed and event.button_index == JOY_BUTTON_B
 	)
 	if menu_back_pressed:
+		if _gn_advanced_panel != null and _gn_advanced_panel.visible:
+			_ui_cancel_frame = Engine.get_process_frames()
+			_gn_close_advanced()
+			return true
 		if _settings_panel != null and _settings_panel.visible:
 			_ui_cancel_frame = Engine.get_process_frames()
 			_close_settings()
@@ -5005,11 +5009,12 @@ func _build_pause_menu() -> void:
 
 
 # Start menu under GameNight. The party is on the couch and online play is the
-# host's business, so it carries no hosting, joining or quitting: just what
-# the party can change in the lobby (mode, bots, the match settings), a way
-# to start over, and personal settings. Resume and New round sit on top.
-var _gn_new_round_btn: Button = null
+# host's business, so it carries no hosting, joining or quitting. The front
+# is short (Joep, 2026-10-19): Resume, New match, one button that switches
+# the mode outright, the AI players. The party's match tuning (gravity,
+# rounds to win and the rest) waits one level down, under Advanced.
 var _gn_mode_btn: Button = null
+var _gn_advanced_panel: Control = null
 var _gn_setting_sliders: Dictionary = {}
 const GN_MENU_LABEL_WIDTH := 250.0
 
@@ -5017,14 +5022,60 @@ func _build_gamenight_pause_menu() -> void:
 	var scaffold := _build_modal_scaffold("PauseMenu", 8)
 	var root: Control = scaffold["root"]
 	var vb: VBoxContainer = scaffold["vb"]
-	var panel := vb.get_parent() as PanelContainer
-	if panel:
-		panel.custom_minimum_size = Vector2(560, 0)
-		# Keep the panel clear of the title above it.
-		var center := panel.get_parent() as Control
-		if center:
-			center.offset_top = 80.0
+	_gn_place_panel(vb, 420.0)
+	root.add_child(_gn_menu_title())
 
+	var resume := _gn_menu_button("RESUME", _toggle_pause_menu)
+	var shortcut := Shortcut.new()
+	var ev := InputEventAction.new()
+	ev.action = "ui_cancel"
+	shortcut.events.append(ev)
+	resume.shortcut = shortcut
+	vb.add_child(resume)
+	vb.add_child(_gn_menu_button("NEW MATCH", _pause_restart_match))
+	# Names the other mode and goes there in one press (a new match in it).
+	_gn_mode_btn = _gn_menu_button("", func() -> void:
+		_pause_change_mode(GAME_MODE_COOP if game_mode == GAME_MODE_VERSUS else GAME_MODE_VERSUS))
+	vb.add_child(_gn_mode_btn)
+
+	var bot_row := HBoxContainer.new()
+	bot_row.add_theme_constant_override("separation", 8)
+	var bot_label := Label.new()
+	bot_label.text = "AI players"
+	bot_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	bot_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	bot_label.add_theme_color_override("font_color", Color(0.85, 0.85, 0.95))
+	bot_row.add_child(bot_label)
+	var bot_minus := _gn_menu_button("-", func() -> void:
+		_pause_remove_bot()
+		_refresh_bot_counter.call_deferred())
+	bot_minus.custom_minimum_size = Vector2(44, 34)
+	bot_row.add_child(bot_minus)
+	var bot_count := Label.new()
+	bot_count.custom_minimum_size = Vector2(44, 0)
+	bot_count.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	bot_count.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	bot_count.add_theme_font_size_override("font_size", 16)
+	bot_count.add_theme_color_override("font_color", Color(1.0, 0.95, 0.78))
+	bot_row.add_child(bot_count)
+	var bot_plus := _gn_menu_button("+", func() -> void:
+		_pause_add_bot()
+		_refresh_bot_counter.call_deferred())
+	bot_plus.custom_minimum_size = Vector2(44, 34)
+	bot_row.add_child(bot_plus)
+	vb.add_child(bot_row)
+	_pause_bot_count_label = bot_count
+	_pause_bot_minus_button = bot_minus
+	_pause_bot_plus_button = bot_plus
+
+	vb.add_child(_gn_menu_button("ADVANCED", _gn_open_advanced))
+	vb.add_child(_gn_menu_button("SETTINGS", _open_settings))
+
+	_pause_menu = root
+	_pause_menu.visible = false
+
+
+func _gn_menu_title() -> Label:
 	var title := _make_menu_title("GROWING GUNS", 42, 6)
 	title.set_anchors_preset(Control.PRESET_CENTER_TOP)
 	title.anchor_left = 0.5
@@ -5034,55 +5085,30 @@ func _build_gamenight_pause_menu() -> void:
 	title.offset_right = 250.0
 	title.offset_bottom = 76.0
 	title.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	root.add_child(title)
+	return title
 
-	var resume := _gn_menu_button("RESUME", _toggle_pause_menu)
-	var shortcut := Shortcut.new()
-	var ev := InputEventAction.new()
-	ev.action = "ui_cancel"
-	shortcut.events.append(ev)
-	resume.shortcut = shortcut
-	vb.add_child(resume)
-	_gn_new_round_btn = _gn_menu_button("NEW ROUND", _gn_new_round)
-	vb.add_child(_gn_new_round_btn)
-	vb.add_child(_gn_menu_button("NEW MATCH", _pause_restart_match))
 
-	_gn_mode_btn = _gn_menu_button("", func() -> void:
-		_pause_change_mode(GAME_MODE_COOP if game_mode == GAME_MODE_VERSUS else GAME_MODE_VERSUS))
-	vb.add_child(_gn_mode_btn)
+func _gn_place_panel(vb: VBoxContainer, width: float) -> void:
+	var panel := vb.get_parent() as PanelContainer
+	if panel == null:
+		return
+	panel.custom_minimum_size = Vector2(width, 0)
+	# Keep the panel clear of the title above it.
+	var center := panel.get_parent() as Control
+	if center:
+		center.offset_top = 80.0
 
-	var bot_row := HBoxContainer.new()
-	bot_row.add_theme_constant_override("separation", 8)
-	var bot_label := Label.new()
-	bot_label.text = "AI players"
-	bot_label.custom_minimum_size = Vector2(GN_MENU_LABEL_WIDTH, 0)
-	bot_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	bot_label.add_theme_color_override("font_color", Color(0.85, 0.85, 0.95))
-	bot_row.add_child(bot_label)
-	var bot_minus := _gn_menu_button("-", func() -> void:
-		_pause_remove_bot()
-		_refresh_bot_counter.call_deferred())
-	bot_minus.custom_minimum_size = Vector2(44, 32)
-	bot_row.add_child(bot_minus)
-	var bot_count := Label.new()
-	bot_count.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	bot_count.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	bot_count.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	bot_count.add_theme_font_size_override("font_size", 16)
-	bot_count.add_theme_color_override("font_color", Color(1.0, 0.95, 0.78))
-	bot_row.add_child(bot_count)
-	var bot_plus := _gn_menu_button("+", func() -> void:
-		_pause_add_bot()
-		_refresh_bot_counter.call_deferred())
-	bot_plus.custom_minimum_size = Vector2(44, 32)
-	bot_row.add_child(bot_plus)
-	vb.add_child(bot_row)
-	_pause_bot_count_label = bot_count
-	_pause_bot_minus_button = bot_minus
-	_pause_bot_plus_button = bot_plus
 
-	# The party's match settings, the same ones the lobby offers. A change goes
-	# through GameNight, so the phones and the lobby show it too.
+# The party's match tuning, the same settings the lobby offers. A change goes
+# through GameNight too, so the phones and the lobby show it.
+func _gn_open_advanced() -> void:
+	if _gn_advanced_panel:
+		_gn_advanced_panel.queue_free()
+	var scaffold := _build_modal_scaffold("AdvancedSettings", 8)
+	var root: Control = scaffold["root"]
+	var vb: VBoxContainer = scaffold["vb"]
+	_gn_place_panel(vb, 560.0)
+	root.add_child(_gn_menu_title())
 	var settings: RefCounted = GameNightBridge.settings
 	_gn_setting_sliders.clear()
 	for spec: Dictionary in settings.SPECS:
@@ -5099,11 +5125,21 @@ func _build_gamenight_pause_menu() -> void:
 			settings.change(key, int(v))
 			GameNight.set_setting(key, int(v)))
 		_gn_setting_sliders[key] = slider
+	vb.add_child(_gn_menu_button("BACK", _gn_close_advanced))
+	_gn_advanced_panel = root
+	if _pause_menu:
+		_pause_menu.visible = false
+	MenuHelpers.grab_first_menu_focus(root)
 
-	vb.add_child(_gn_menu_button("SETTINGS", _open_settings))
 
-	_pause_menu = root
-	_pause_menu.visible = false
+func _gn_close_advanced() -> void:
+	if _gn_advanced_panel:
+		_gn_advanced_panel.queue_free()
+		_gn_advanced_panel = null
+	_gn_setting_sliders.clear()
+	if _pause_menu:
+		_pause_menu.visible = true
+		MenuHelpers.grab_first_menu_focus(_pause_menu)
 
 
 func _gn_menu_button(text: String, action: Callable) -> Button:
@@ -5117,25 +5153,7 @@ func _gn_menu_button(text: String, action: Callable) -> Button:
 func _refresh_gamenight_pause_menu() -> void:
 	_refresh_bot_counter()
 	if _gn_mode_btn:
-		_gn_mode_btn.text = "MODE: VERSUS" if game_mode == GAME_MODE_VERSUS else "MODE: WAVE SURVIVAL"
-	if _gn_new_round_btn:
-		# A new round mid card pick or on the results screen would cut those
-		# short; New match covers that.
-		_gn_new_round_btn.disabled = state != State.PLAYING
-	var settings: RefCounted = GameNightBridge.settings
-	for key in _gn_setting_sliders:
-		var slider := _gn_setting_sliders[key] as HSlider
-		slider.set_value_no_signal(settings.value(key))
-		var value_label := slider.get_parent().get_child(slider.get_index() + 1) as Label
-		if value_label:
-			value_label.text = str(settings.value(key))
-
-
-func _gn_new_round() -> void:
-	if state != State.PLAYING or not multiplayer.is_server():
-		return
-	_toggle_pause_menu()
-	_start_round_flashed()
+		_gn_mode_btn.text = "SWITCH TO WAVE SURVIVAL" if game_mode == GAME_MODE_VERSUS else "SWITCH TO VERSUS"
 
 
 # Pause-menu controls — set in _build_pause_menu, used by the action handlers
