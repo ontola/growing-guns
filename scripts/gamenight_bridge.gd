@@ -262,10 +262,15 @@ func _on_started(session_id: String) -> void:
 	_bind_gamenight_seats()
 	var game := get_tree().current_scene
 	# Warming happened in a minimised window, which never drew the effect
-	# warmup: compile those pipelines now, behind the cage descent.
+	# warmup: compile those pipelines now, on the first visible frames and
+	# before the match runs. Running it alongside the round start put its
+	# main-thread work (it rebuilds every effect once) a few seconds into
+	# play, as a freeze.
 	if game:
-		ShaderWarmup.rewarm_on_screen(game)
-	if game and game.has_method("_open_gamenight_start_gate"):
+		await ShaderWarmup.rewarm_on_screen(game)
+	if session_id != current_session_id or not is_instance_valid(game):
+		return
+	if game.has_method("_open_gamenight_start_gate"):
 		game._open_gamenight_start_gate()
 
 

@@ -540,6 +540,13 @@ func warmup_async(weapons: Array, radii: Array) -> void:
 			var key := _shot_cache_key(w, v)
 			_cached_wav(key, Callable(self, "_synth_shot").bind(w, v))
 			await get_tree().process_frame
+		# Its near-miss zips too (same buckets as bullet_zip).
+		var speed_bucket := int(round(clampf((w as Weapon).get_bullet_speed() / 165.0, 0.2, 5.0) * 10.0))
+		var scale_bucket := int(round(clampf((w as Weapon).get_bullet_scale_for_shot(false), 0.5, 4.0) * 10.0))
+		for v in BULLET_ZIP_VARIANTS:
+			_cached_wav("bullet_zip:%d:%d:%d" % [speed_bucket, scale_bucket, v],
+				Callable(self, "_synth_bullet_zip").bind(float(speed_bucket) / 10.0, float(scale_bucket) / 10.0))
+			await get_tree().process_frame
 	for radius in radii:
 		var r_bucket: int = int(round(clampf(float(radius), 2.0, 24.0)))
 		for v in EXPLOSION_VARIANTS:
@@ -610,6 +617,53 @@ func _warmup_specials_async() -> void:
 		await get_tree().process_frame
 	# Proximity-mine arm beep.
 	_cached_samples("mine_plant", Callable(self, "_synth_mine_plant"))
+	await get_tree().process_frame
+	# Everything else that used to synth on its first play mid-match. Timed
+	# on a laptop CPU: explosions 40-85 ms each, reload 20 ms, pickup drop and
+	# enemy siren ~16 ms, the rest 1-5 ms (but a frame's budget is 16).
+	# Small blasts: fragments, dash bombs, cluster pops and explosive rounds
+	# land in buckets 2-12, and only 4/6/8/10/24 were warmed.
+	for r_bucket: int in range(2, 13):
+		if r_bucket in [4, 6, 8, 10]:
+			continue
+		for v in EXPLOSION_VARIANTS:
+			_cached_wav("explosion_bang:%d:%d" % [r_bucket, v], Callable(self, "_synth_explosion").bind(float(r_bucket), v))
+			await get_tree().process_frame
+			_cached_wav("explosion_rumble:%d:%d" % [r_bucket, v], Callable(self, "_synth_explosion_rumble").bind(float(r_bucket), v))
+			await get_tree().process_frame
+	var one_offs := {
+		"pickup_drop": Callable(self, "_synth_pickup_drop"),
+		"enemy_incoming": Callable(self, "_synth_enemy_incoming"),
+		"hit_received": Callable(self, "_synth_hit_received"),
+		"kill_confirm": Callable(self, "_synth_kill_confirm"),
+		"next_round": Callable(self, "_synth_next_round"),
+		"empty_chamber": Callable(self, "_synth_empty_chamber"),
+		"dash": Callable(self, "_synth_dash"),
+	}
+	for key: String in one_offs:
+		_cached_samples(key, one_offs[key])
+		await get_tree().process_frame
+	for step in 3:
+		_cached_samples("pick_beep_%d" % step, Callable(self, "_synth_pick_beep").bind(step))
+		await get_tree().process_frame
+	for v in CARD_FLIP_VARIANTS:
+		_cached_samples("card_flip:%d" % v, Callable(self, "_synth_card_flip").bind(v))
+		await get_tree().process_frame
+	# Hits at base damage and at a headshot's double, every variant.
+	for dmg_ratio: float in [1.0, 2.0]:
+		var dmg_bucket := int(round(dmg_ratio * 4.0))
+		for v in IMPACT_VARIANTS:
+			_cached_samples("impact:%d:%d" % [dmg_bucket, v], Callable(self, "_synth_impact").bind(dmg_ratio, v))
+			await get_tree().process_frame
+	for kind: String in ["body", "head"]:
+		for dmg: int in [0, int(Weapon.BASE_DAMAGE), int(Weapon.BASE_DAMAGE * 2.0)]:
+			var ratio := 1.0 if dmg == 0 else clampf(float(dmg) / Weapon.BASE_DAMAGE, 0.5, 5.0)
+			_cached_samples(_hitmarker_cache_key(kind, dmg), Callable(self, "_synth_hitmarker").bind(kind, ratio))
+			await get_tree().process_frame
+	# Bullets flying past at the base speed and size.
+	for v in BULLET_ZIP_VARIANTS:
+		_cached_wav("bullet_zip:10:10:%d" % v, Callable(self, "_synth_bullet_zip").bind(1.0, 1.0))
+		await get_tree().process_frame
 
 
 func _shot_cache_key(w: Weapon, variant: int, last_in_mag: bool = false) -> String:
@@ -1040,7 +1094,9 @@ func _next_card_flip_variant() -> int:
 func reload(duration: float, at: Vector3 = NO_POS) -> Node:
 	# Continuous rattle for the full reload duration. Returns the player node
 	# so the caller can stop it early (e.g. on respawn / round end).
-	return _play(_synth_reload(duration), -14.0, at, "reload", -1.0, false, 70.0)
+	# Cached per 0.05 s: synthesising the rattle took ~20 ms on every reload.
+	var bucket := snappedf(clampf(duration, 0.2, 6.0), 0.05)
+	return _play(_cached_samples("reload:%0.2f" % bucket, Callable(self, "_synth_reload").bind(bucket)), -14.0, at, "reload", -1.0, false, 70.0)
 
 func hitmarker(kind: String = "body", dmg: int = 0) -> void:
 	# Scale pitch down and volume up with damage — heavy guns land with a

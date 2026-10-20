@@ -133,6 +133,30 @@ static func warmup_shaders(scene: Node) -> void:
 		mi.add_child(t)
 		t.start()
 		t.timeout.connect(mi.queue_free)
+	# The grenade model's own materials (iron, brass, steel, the tinted band,
+	# the emissive beacon), drawn once at sub-pixel scale.
+	var model := Node3D.new()
+	var parts := _model()
+	var band_mat := StandardMaterial3D.new()
+	band_mat.metallic = 0.5
+	var beacon_mat := StandardMaterial3D.new()
+	beacon_mat.emission_enabled = true
+	for part: Array in parts:
+		var pm := MeshInstance3D.new()
+		pm.mesh = part[0]
+		match part[1]:
+			"band":
+				pm.material_override = band_mat
+			"beacon":
+				pm.material_override = beacon_mat
+			_:
+				pm.material_override = part[1]
+		pm.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		model.add_child(pm)
+	scene.add_child(model)
+	model.global_position = Vector3.ZERO
+	model.scale = Vector3.ONE * 0.005
+	scene.get_tree().create_timer(0.3, true).timeout.connect(model.queue_free)
 
 
 # Instantiate once during boot so the first thrown grenade doesn't pay scene
@@ -167,6 +191,115 @@ static func warmup_scene(scene: Node) -> void:
 
 var _age := 0.0
 var _exploded := false
+## The blinking light on top, and its own material (each grenade blinks on
+## its own clock).
+var _beacon_mat: StandardMaterial3D = null
+
+# A frag grenade, built once and shared: an iron egg with raised bands, a
+# brass fuse head, the spoon down its side and a pull ring. The tint of a
+# variant (cluster, fragment, dash bomb) goes on the beacon and the bands.
+static var _model_parts: Array = []
+
+
+static func _model() -> Array:
+	if not _model_parts.is_empty():
+		return _model_parts
+	var iron := StandardMaterial3D.new()
+	iron.albedo_color = Color(0.2, 0.22, 0.17)
+	iron.metallic = 0.55
+	iron.roughness = 0.55
+	var brass := StandardMaterial3D.new()
+	brass.albedo_color = Color(0.72, 0.56, 0.26)
+	brass.metallic = 0.8
+	brass.roughness = 0.35
+	var steel := StandardMaterial3D.new()
+	steel.albedo_color = Color(0.62, 0.63, 0.66)
+	steel.metallic = 0.85
+	steel.roughness = 0.3
+	var body := SphereMesh.new()
+	body.radius = 0.16
+	body.height = 0.4
+	body.radial_segments = 14
+	body.rings = 8
+	var band := TorusMesh.new()
+	# Sized to sit half sunk in the egg's surface: raised ridges, not hoops.
+	band.inner_radius = 0.142
+	band.outer_radius = 0.162
+	band.rings = 18
+	band.ring_segments = 6
+	var head := CylinderMesh.new()
+	head.top_radius = 0.06
+	head.bottom_radius = 0.075
+	head.height = 0.09
+	head.radial_segments = 10
+	var spoon := BoxMesh.new()
+	spoon.size = Vector3(0.05, 0.26, 0.022)
+	var ring := TorusMesh.new()
+	ring.inner_radius = 0.035
+	ring.outer_radius = 0.05
+	ring.rings = 12
+	ring.ring_segments = 5
+	var beacon := SphereMesh.new()
+	beacon.radius = 0.035
+	beacon.height = 0.07
+	beacon.radial_segments = 8
+	beacon.rings = 4
+	# [mesh, material ("iron"/"brass"/"steel"/"band"/"beacon"), transform]
+	_model_parts = [
+		[body, iron, Transform3D.IDENTITY],
+		[band, "band", Transform3D(Basis.IDENTITY.scaled(Vector3(0.99, 1, 0.99)), Vector3(0, 0.07, 0))],
+		[band, "band", Transform3D(Basis.IDENTITY.scaled(Vector3(1.04, 1, 1.04)), Vector3(0, -0.03, 0))],
+		[band, "band", Transform3D(Basis.IDENTITY.scaled(Vector3(0.84, 1, 0.84)), Vector3(0, -0.12, 0))],
+		[head, brass, Transform3D(Basis.IDENTITY, Vector3(0, 0.22, 0))],
+		[spoon, steel, Transform3D(Basis(Vector3.FORWARD, -0.18), Vector3(0.1, 0.12, 0))],
+		[ring, steel, Transform3D(Basis(Vector3.RIGHT, PI * 0.5), Vector3(-0.09, 0.23, 0))],
+		[beacon, "beacon", Transform3D(Basis.IDENTITY, Vector3(0, 0.275, 0))],
+	]
+	return _model_parts
+
+
+func _build_model(tint: Color) -> void:
+	# Mines keep their own flat disc look (set up by whoever plants them).
+	if is_mine:
+		return
+	var old := get_node_or_null("Mesh") as MeshInstance3D
+	if old:
+		old.visible = false
+	var band_mat := StandardMaterial3D.new()
+	band_mat.albedo_color = Color(0.14, 0.15, 0.11).lerp(tint, 0.18)
+	band_mat.metallic = 0.5
+	band_mat.roughness = 0.6
+	_beacon_mat = StandardMaterial3D.new()
+	_beacon_mat.albedo_color = tint
+	_beacon_mat.emission_enabled = true
+	_beacon_mat.emission = tint
+	_beacon_mat.emission_energy_multiplier = 3.0
+	var model := Node3D.new()
+	model.name = "Model"
+	add_child(model)
+	for part: Array in _model():
+		var mi := MeshInstance3D.new()
+		mi.mesh = part[0]
+		match part[1]:
+			"band":
+				mi.material_override = band_mat
+			"beacon":
+				mi.material_override = _beacon_mat
+			_:
+				mi.material_override = part[1]
+		mi.transform = part[2]
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		model.add_child(mi)
+
+
+func _process(_delta: float) -> void:
+	if _beacon_mat == null or _exploded:
+		return
+	# Blinks, and faster the longer it has been live: a mine about to expire
+	# or a grenade still rolling reads as dangerous.
+	var rate := 2.0 + _age * (0.6 if is_mine else 3.0)
+	var on := fmod(_age * rate, 1.0) < 0.45
+	_beacon_mat.emission_energy_multiplier = 5.0 if on else 0.4
 
 func _ready() -> void:
 	set_multiplayer_authority(1)
@@ -175,31 +308,19 @@ func _ready() -> void:
 		freeze = true
 		freeze_mode = RigidBody3D.FREEZE_MODE_KINEMATIC
 	body_entered.connect(_on_body_entered)
+	var tint := Color(1.0, 0.16, 0.12)
 	if is_fragment:
 		scale = Vector3(0.55, 0.55, 0.55)
-		_tint_mesh(Color(1.0, 0.42, 0.12))
+		tint = Color(1.0, 0.42, 0.12)
 	elif is_cluster_parent:
 		scale = Vector3(1.22, 1.22, 1.22)
-		_tint_mesh(Color(1.0, 0.55, 0.15))
+		tint = Color(1.0, 0.62, 0.15)
 	elif is_dash_bomb:
 		scale = Vector3(0.62, 0.62, 0.62)
-		_tint_mesh(Color(1.0, 0.32, 0.14))
+		tint = Color(1.0, 0.32, 0.14)
 		freeze = true
 		freeze_mode = RigidBody3D.FREEZE_MODE_KINEMATIC
-
-
-func _tint_mesh(color: Color) -> void:
-	var mesh := get_node_or_null("Mesh") as MeshInstance3D
-	if mesh == null:
-		return
-	var mat := mesh.get_active_material(0)
-	if mat == null:
-		return
-	var dup := mat.duplicate() as StandardMaterial3D
-	dup.albedo_color = color
-	dup.emission = color.lerp(Color(1.0, 0.85, 0.35), 0.45)
-	dup.emission_energy_multiplier = 1.1
-	mesh.material_override = dup
+	_build_model(tint)
 
 
 func _blast_radius() -> float:

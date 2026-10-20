@@ -879,61 +879,24 @@ func _make_card(card_id: String, card: Dictionary, index: int) -> Control:
 	root.set_meta("body", panel)
 	root.set_meta("idle", idle)
 
+	# The panel only carries the drop shadow (the highlight grows it); the
+	# CardFace draws everything else.
 	var sb := StyleBoxFlat.new()
-	var col: Color = card.get("color", Color.WHITE)
+	sb.bg_color = UiStyle.INK
 	if rarity == "rare":
-		sb.bg_color = Color(0.06, 0.07, 0.18, 0.98)
-		sb.border_color = Color(0.8, 0.9, 1.0)
-		sb.shadow_color = Color(0.4, 0.6, 1.0, 0.4)
+		sb.shadow_color = Color(CardFace.GOLD, 0.4)
 		sb.shadow_size = 25
 	else:
-		# Arena: near-black with a hint of the card's colour, which also runs
-		# down the thick left edge like the HUD plates' red one.
-		sb.bg_color = UiStyle.INK.lerp(col, 0.1)
-		sb.bg_color.a = 0.97
-		sb.border_color = col.lerp(UiStyle.BONE, 0.15)
 		sb.shadow_color = Color(0, 0, 0, 0.3)
 		sb.shadow_size = 8
-	sb.set_border_width_all(2)
-	sb.border_width_left = 7
-	sb.set_corner_radius_all(2)
 	panel.add_theme_stylebox_override("panel", sb)
 
-	var vb := VBoxContainer.new()
-	vb.alignment = BoxContainer.ALIGNMENT_CENTER
-	vb.add_theme_constant_override("separation", 10)
-	vb.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT, Control.PRESET_MODE_MINSIZE, 14)
-	vb.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var vb := CardFace.new()
+	vb.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	var desc_text := HUD_ICON_SCRIPT.prompt_text(str(card.get("desc", "")), uses_controller())
+	vb.setup(card_id, card, desc_text, _card_stat_diff(card_id))
 	panel.add_child(vb)
 	root.set_meta("content", vb)
-
-	var title := Label.new()
-	UiStyle.display_label(title, 22, 2)
-	title.text = str(card.get("name", card_id)).to_upper()
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	vb.add_child(title)
-	root.set_meta("title_label", title)
-
-	var desc := _label(UiStyle.BONE)
-	desc.add_theme_constant_override("outline_size", 0)
-	desc.text = HUD_ICON_SCRIPT.prompt_text(str(card.get("desc", "")), uses_controller())
-	desc.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	desc.add_theme_font_size_override("font_size", 16)
-	vb.add_child(desc)
-	root.set_meta("desc_label", desc)
-
-	var stats_vbox := VBoxContainer.new()
-	stats_vbox.add_theme_constant_override("separation", 1)
-	vb.add_child(stats_vbox)
-	root.set_meta("stats_vbox", stats_vbox)
-	for diff_line in _card_stat_diff(card_id):
-		var slbl := _label(UiStyle.BONE_DIM)
-		slbl.text = diff_line
-		slbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		slbl.add_theme_font_size_override("font_size", 12)
-		stats_vbox.add_child(slbl)
 
 	if rarity == "rare":
 		_add_holo_overlay(panel, sb)
@@ -1092,21 +1055,10 @@ func _scale_card(card: Control, scale: float) -> void:
 		body.custom_minimum_size = Vector2(200.0, 280.0) * scale
 		body.size = body.custom_minimum_size
 		body.pivot_offset = body.size * 0.5
-	# Inner text scales with the card so a small splitscreen card doesn't
-	# render with chunky default fonts and a big single-screen card doesn't
-	# render with tiny ones. Base sizes match the values used in _make_card.
-	var title := card.get_meta("title_label") as Label
-	if title:
-		title.add_theme_font_size_override("font_size", maxi(12, int(round(22.0 * scale))))
-	var desc := card.get_meta("desc_label") as Label
-	if desc:
-		desc.add_theme_font_size_override("font_size", maxi(10, int(round(16.0 * scale))))
-	var stats := card.get_meta("stats_vbox") as VBoxContainer
-	if stats:
-		var stat_size: int = maxi(8, int(round(12.0 * scale)))
-		for s in stats.get_children():
-			if s is Label:
-				(s as Label).add_theme_font_size_override("font_size", stat_size)
+	# The face draws from its own size, so it only needs a redraw.
+	var face := card.get_meta("content", null) as CanvasItem
+	if face:
+		face.queue_redraw()
 
 
 ## One holo shader for every card, built once. A fresh Shader per card made
@@ -1147,8 +1099,8 @@ static func holo_shader() -> Shader:
 
 func _add_holo_overlay(panel: Control, style: StyleBoxFlat) -> void:
 	var tw_border := panel.create_tween().set_loops()
-	tw_border.tween_property(style, "border_color", Color(0.6, 0.9, 1.0), 1.8)
-	tw_border.tween_property(style, "border_color", Color(0.9, 0.6, 1.0), 1.8)
+	tw_border.tween_property(style, "shadow_color", Color(1.0, 0.55, 0.2, 0.45), 1.8)
+	tw_border.tween_property(style, "shadow_color", Color(CardFace.GOLD, 0.4), 1.8)
 	var shader := holo_shader()
 	var holo_mat := ShaderMaterial.new()
 	holo_mat.shader = shader
@@ -1168,8 +1120,9 @@ func _add_holo_overlay(panel: Control, style: StyleBoxFlat) -> void:
 	holo_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	holo_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	holo_overlay.material = holo_mat
+	holo_mat.set_shader_parameter("corner_radius", 1.0)
+	holo_mat.set_shader_parameter("intensity", 0.1)
 	panel.add_child(holo_overlay)
-	panel.move_child(holo_overlay, 0)
 
 
 func _card_stat_diff(card_id: String) -> Array[String]:

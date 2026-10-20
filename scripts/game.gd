@@ -5015,14 +5015,12 @@ func _build_pause_menu() -> void:
 var _gn_mode_btn: Button = null
 var _gn_advanced_panel: Control = null
 var _gn_setting_sliders: Dictionary = {}
-const GN_MENU_LABEL_WIDTH := 250.0
+const GN_MENU_LABEL_WIDTH := 236.0
 
 func _build_gamenight_pause_menu() -> void:
-	var scaffold := _build_modal_scaffold("PauseMenu", 8)
+	var scaffold := _gn_scaffold("PauseMenu", "")
 	var root: Control = scaffold["root"]
 	var vb: VBoxContainer = scaffold["vb"]
-	_gn_place_panel(vb, 420.0)
-	root.add_child(_gn_menu_title())
 
 	var resume := _gn_menu_button("RESUME", _toggle_pause_menu)
 	var shortcut := Shortcut.new()
@@ -5045,7 +5043,7 @@ func _build_gamenight_pause_menu() -> void:
 	bot_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	# Lined up with the button text beside it: same face, same inset.
 	bot_label.add_theme_font_override("font", UiStyle.BOLD)
-	bot_label.add_theme_font_size_override("font_size", 22)
+	bot_label.add_theme_font_size_override("font_size", 28)
 	bot_label.add_theme_color_override("font_color", UiStyle.BONE_DIM)
 	var inset := StyleBoxEmpty.new()
 	inset.content_margin_left = 14
@@ -5054,7 +5052,8 @@ func _build_gamenight_pause_menu() -> void:
 	var bot_minus := _gn_menu_button("-", func() -> void:
 		_pause_remove_bot()
 		_refresh_bot_counter.call_deferred())
-	bot_minus.custom_minimum_size = Vector2(44, 34)
+	bot_minus.custom_minimum_size = Vector2(46, 46)
+	bot_minus.alignment = HORIZONTAL_ALIGNMENT_CENTER
 	bot_row.add_child(bot_minus)
 	var bot_count := Label.new()
 	bot_count.custom_minimum_size = Vector2(44, 0)
@@ -5065,7 +5064,8 @@ func _build_gamenight_pause_menu() -> void:
 	var bot_plus := _gn_menu_button("+", func() -> void:
 		_pause_add_bot()
 		_refresh_bot_counter.call_deferred())
-	bot_plus.custom_minimum_size = Vector2(44, 34)
+	bot_plus.custom_minimum_size = Vector2(46, 46)
+	bot_plus.alignment = HORIZONTAL_ALIGNMENT_CENTER
 	bot_row.add_child(bot_plus)
 	vb.add_child(bot_row)
 	_pause_bot_count_label = bot_count
@@ -5079,28 +5079,67 @@ func _build_gamenight_pause_menu() -> void:
 	_pause_menu.visible = false
 
 
-func _gn_menu_title() -> Label:
-	var title := _make_menu_title("GROWING GUNS", 42, 6)
-	title.set_anchors_preset(Control.PRESET_CENTER_TOP)
-	title.anchor_left = 0.5
-	title.anchor_right = 0.5
-	title.offset_left = -250.0
-	title.offset_top = 10.0
-	title.offset_right = 250.0
-	title.offset_bottom = 82.0
-	title.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	return title
+const ARENA_MENU_BACKDROP := preload("res://scripts/arena_menu_backdrop.gd")
+const GN_MENU_LEFT := 52.0
+const GN_MENU_WIDTH := 400.0
+
+var _gn_status_label: Label = null
 
 
-func _gn_place_panel(vb: VBoxContainer, width: float) -> void:
-	var panel := vb.get_parent() as PanelContainer
-	if panel == null:
-		return
-	panel.custom_minimum_size = Vector2(width, 0)
-	# Keep the panel clear of the title above it.
-	var center := panel.get_parent() as Control
-	if center:
-		center.offset_top = 80.0
+## The GameNight Start menu's frame: a dark slab down the left holding the
+## stacked logo, a line saying what is being played, an optional heading,
+## and the item column. The match stays visible, dimmed, on the right.
+func _gn_scaffold(node_name: String, heading: String) -> Dictionary:
+	var root := Control.new()
+	root.name = node_name
+	root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	root.mouse_filter = Control.MOUSE_FILTER_STOP
+	root.process_mode = Node.PROCESS_MODE_ALWAYS
+	$HUD.add_child(root)
+
+	var backdrop: Control = ARENA_MENU_BACKDROP.new()
+	backdrop.set_anchors_preset(Control.PRESET_FULL_RECT)
+	root.add_child(backdrop)
+
+	var logo := Label.new()
+	logo.text = "GROWING\nGUNS"
+	UiStyle.display_label(logo, 78, 5)
+	logo.add_theme_constant_override("line_spacing", -36)
+	logo.position = Vector2(GN_MENU_LEFT, 26.0)
+	root.add_child(logo)
+
+	var status := Label.new()
+	status.add_theme_font_override("font", UiStyle.BOLD)
+	status.add_theme_font_size_override("font_size", 20)
+	status.add_theme_color_override("font_color", UiStyle.RED)
+	status.position = Vector2(GN_MENU_LEFT + 4.0, 212.0)
+	status.text = _gn_status_text()
+	root.add_child(status)
+	_gn_status_label = status
+
+	var top := 254.0
+	if not heading.is_empty():
+		var head := Label.new()
+		head.text = heading
+		UiStyle.display_label(head, 34, 3)
+		head.position = Vector2(GN_MENU_LEFT, top)
+		root.add_child(head)
+		top += 54.0
+
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 4)
+	vb.position = Vector2(GN_MENU_LEFT - 14.0, top)
+	vb.custom_minimum_size = Vector2(GN_MENU_WIDTH, 0)
+	vb.size = Vector2(GN_MENU_WIDTH, 0)
+	root.add_child(vb)
+	return {"root": root, "vb": vb}
+
+
+## What is being played right now, under the logo.
+func _gn_status_text() -> String:
+	if game_mode == GAME_MODE_COOP:
+		return "WAVE SURVIVAL  /  WAVE %d" % coop_wave
+	return "VERSUS  /  ROUND %d  /  FIRST TO %d" % [current_round, rounds_to_win]
 
 
 # The party's match tuning, the same settings the lobby offers. A change goes
@@ -5108,11 +5147,9 @@ func _gn_place_panel(vb: VBoxContainer, width: float) -> void:
 func _gn_open_advanced() -> void:
 	if _gn_advanced_panel:
 		_gn_advanced_panel.queue_free()
-	var scaffold := _build_modal_scaffold("AdvancedSettings", 8)
+	var scaffold := _gn_scaffold("AdvancedSettings", "ADVANCED")
 	var root: Control = scaffold["root"]
 	var vb: VBoxContainer = scaffold["vb"]
-	_gn_place_panel(vb, 560.0)
-	root.add_child(_gn_menu_title())
 	var settings: RefCounted = GameNightBridge.settings
 	_gn_setting_sliders.clear()
 	for spec: Dictionary in settings.SPECS:
@@ -5121,7 +5158,11 @@ func _gn_open_advanced() -> void:
 		var row := _build_slider_row(str(spec.label), current, float(spec.min), float(spec.max), 1.0, str(current))
 		vb.add_child(row["row"])
 		# One label column, so the sliders line up.
-		((row["row"] as Control).get_child(0) as Control).custom_minimum_size.x = GN_MENU_LABEL_WIDTH
+		var row_label := (row["row"] as Control).get_child(0) as Label
+		row_label.custom_minimum_size.x = GN_MENU_LABEL_WIDTH
+		row_label.add_theme_font_override("font", UiStyle.BOLD)
+		row_label.add_theme_font_size_override("font_size", 17)
+		row_label.add_theme_color_override("font_color", UiStyle.BONE_DIM)
 		var slider: HSlider = row["slider"]
 		var value_label: Label = row["value_label"]
 		slider.value_changed.connect(func(v: float) -> void:
@@ -5150,7 +5191,8 @@ func _gn_menu_button(text: String, action: Callable) -> Button:
 	var button := Button.new()
 	button.text = text
 	button.alignment = HORIZONTAL_ALIGNMENT_LEFT
-	button.custom_minimum_size = Vector2(0, 38)
+	button.add_theme_font_size_override("font_size", 28)
+	button.custom_minimum_size = Vector2(0, 46)
 	button.pressed.connect(action)
 	return button
 
@@ -5159,6 +5201,8 @@ func _refresh_gamenight_pause_menu() -> void:
 	_refresh_bot_counter()
 	if _gn_mode_btn:
 		_gn_mode_btn.text = "SWITCH TO WAVE SURVIVAL" if game_mode == GAME_MODE_VERSUS else "SWITCH TO VERSUS"
+	if is_instance_valid(_gn_status_label):
+		_gn_status_label.text = _gn_status_text()
 
 
 # Pause-menu controls — set in _build_pause_menu, used by the action handlers
