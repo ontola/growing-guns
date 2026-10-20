@@ -1,0 +1,9 @@
+{
+  "title": "GROWING GUNS",
+  "prompt": "Use case: background-extraction. Extract ONLY the existing GROWING GUNS title wordmark from the supplied approved game cover into a standalone production game logo on genuinely transparent alpha. Preserve the exact typography, spelling, letter shapes, relative placement, number of lines, perspective, colors, outlines, dimensional extrusion, shadows, and small decorative elements that belong to the logo. The purpose is brand consistency: this must look like the SAME logo lifted from this cover, not a redesign. Remove all scene artwork, characters, scenery and background completely, including every hole between letters. Keep only the title and its tight attached decoration. Center the complete logo with a small transparent margin on a wide canvas naturally fitting its aspect ratio. No new text, no tagline, no border, no backdrop, no checkerboard. Sharp clean edges and crisp lettering. Output with true transparency.",
+  "source": "cover-source.png",
+  "master": "logo-source.png",
+  "runtime": "assets/branding/logo.png",
+  "export": "Transparent bounds trimmed, longest edge at most 1024 px; RGBA PNG",
+  "usage": "The approved cover wordmark is reused in the game UI."
+}

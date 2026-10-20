@@ -1,0 +1,68 @@
+name: Publish growing-guns release
+on:
+  workflow_dispatch:
+    inputs:
+      build_run:
+        description: Successful build run for this exact main commit
+        required: true
+      channel:
+        description: GameNight release channel
+        type: choice
+        options: [preview, stable]
+        default: preview
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: gamenight-publish-growing-guns
+  cancel-in-progress: false
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: gamenight
+    steps:
+      - name: Verify the selected build
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_RUN: ${{ inputs.build_run }}
+          EXPECTED_WORKFLOW: Release
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BUILD_RUN" > build-run.json
+          python3 - <<'PYTHON'
+          import json, os
+          run = json.load(open('build-run.json'))
+          assert run['conclusion'] == 'success', 'Build must pass all checks'
+          assert run['head_sha'] == os.environ['GITHUB_SHA'], 'Build must match this commit'
+          assert run['head_branch'] == 'main', 'Build must come from main'
+          assert run['event'] in ('push', 'workflow_dispatch'), 'Untrusted build event'
+          assert run['head_repository']['full_name'] == os.environ['GITHUB_REPOSITORY']
+          assert run['name'] == os.environ['EXPECTED_WORKFLOW'], 'Wrong build workflow'
+          PYTHON
+      - uses: actions/checkout@v4
+        with:
+          path: source
+      - uses: actions/download-artifact@v4
+        with:
+          name: growing-guns-windows
+          path: package
+          run-id: ${{ inputs.build_run }}
+          github-token: ${{ github.token }}
+      - uses: actions/checkout@v4
+        with:
+          repository: ontola/gamenight
+          ref: c99e7a2353e0d277925a5916e4a82386845e3210
+          path: publisher
+          sparse-checkout: scripts/gamenight-publish.py
+          sparse-checkout-cone-mode: false
+      - name: Publish matching store art and tested game
+        env:
+          GAMENIGHT_API_TOKEN: ${{ secrets.GAMENIGHT_API_TOKEN }}
+          CHANNEL: ${{ inputs.channel }}
+          BUILD_RUN: ${{ inputs.build_run }}
+        run: |
+          test -n "$GAMENIGHT_API_TOKEN"
+          mkdir store-media
+          cp source/./assets/gamenight/cover.png store-media/cover.png
+          python3 publisher/scripts/gamenight-publish.py store --manifest source/./gamenight.json --media store-media
+          python3 publisher/scripts/gamenight-publish.py push --game growing-guns --file package/MoreRounds.zip --platform windows --entrypoint MoreRounds.exe --version "art-${GITHUB_SHA}-${BUILD_RUN}" --channel "$CHANNEL" --changelog "New cover artwork and matching in-game logo."

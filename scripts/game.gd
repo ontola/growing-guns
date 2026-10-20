@@ -4815,14 +4815,18 @@ func _build_pause_menu() -> void:
 		panel.custom_minimum_size = Vector2(350, 0)
 
 	# Game title — readable from across the room. Moved out of the box to the top center.
-	var title := _make_menu_title("GROWING GUNS", 42, 6)
+	var title := TextureRect.new()
+	title.texture = preload("res://assets/branding/logo.png")
+	title.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	title.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	title.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	title.set_anchors_preset(Control.PRESET_CENTER_TOP)
 	title.anchor_left = 0.5
 	title.anchor_right = 0.5
 	title.offset_left = -250.0
-	title.offset_top = 35.0
+	title.offset_top = 15.0
 	title.offset_right = 250.0
-	title.offset_bottom = 95.0
+	title.offset_bottom = 195.0
 	title.grow_horizontal = Control.GROW_DIRECTION_BOTH
 	root.add_child(title)
 
