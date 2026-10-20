@@ -5,7 +5,7 @@
   "tagline": "Fast arena FPS — the loser of each round picks the upgrade.",
   "developer": "Joep Meindertsma",
   "players": {
-    "min": 2,
+    "min": 1,
     "max": 4,
     "best": 2
   },
