@@ -37,17 +37,18 @@ signal roster_changed(seats: Array, players: Array, presence: Array)
 ## State that timing in the label. `value` is a bool, int or String.
 signal setting_changed(key: String, value: Variant)
 
-const PROTOCOL_VERSION := 1
+const PROTOCOL := preload("protocol.gd")
+const PROTOCOL_VERSION := PROTOCOL.PROTOCOL_VERSION
 ## This addon's version. GameNight's welcome names the version it ships
 ## (GODOT_SDK_VERSION in gamenight-protocol); an older copy warns, because a
 ## vendored addon that fell behind fails quietly. Bump both together.
-const SDK_VERSION := 2
+const SDK_VERSION := PROTOCOL.GODOT_SDK_VERSION
 const RECONNECT_DELAY := 2.0
 
 ## Which title this process runs. Must match the playlist entry's game id.
 ## Overridden by GAMENIGHT_GAME_ID when the daemon launched us.
 @export var game_id: String = ProjectSettings.get_setting("application/config/name", "godot-game").to_lower()
-@export var daemon_url: String = "ws://127.0.0.1:7912"
+@export var daemon_url: String = "ws://" + PROTOCOL.DEFAULT_ADDR
 ## Reconnect automatically while the daemon is away.
 @export var auto_reconnect: bool = true
 ## A game started by hand (not by GameNight) stays offline, so a test run never
@@ -102,24 +103,24 @@ func _sample_performance() -> void:
 		var size := DisplayServer.window_get_size()
 		_performance.width = size.x
 		_performance.height = size.y
-		_send({"type":"performance","session":_performance_session,"sample":_performance})
+		_send({"type":PROTOCOL.MSG_PERFORMANCE,"session":_performance_session,"sample":_performance})
 		_performance_sent_us = _performance.elapsed_us
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	# The daemon passes the handshake via environment — same binary boots
 	# into game-night mode when launched, runs standalone otherwise.
-	launched_by_daemon = OS.get_environment("GAMENIGHT") == "1"
-	var env_game_id := OS.get_environment("GAMENIGHT_GAME_ID")
+	launched_by_daemon = OS.get_environment(PROTOCOL.ENV_GAMENIGHT) == "1"
+	var env_game_id := OS.get_environment(PROTOCOL.ENV_GAME_ID)
 	if env_game_id != "":
 		game_id = env_game_id
-	var env_addr := OS.get_environment("GAMENIGHT_ADDR")
+	var env_addr := OS.get_environment(PROTOCOL.ENV_ADDR)
 	if env_addr != "":
 		daemon_url = "ws://%s" % env_addr
-	var env_overlay_url := OS.get_environment("GAMENIGHT_OVERLAY_URL")
+	var env_overlay_url := OS.get_environment(PROTOCOL.ENV_OVERLAY_URL)
 	if env_overlay_url != "":
 		overlay_url = env_overlay_url
-	_launch_token = OS.get_environment("GAMENIGHT_TOKEN")
+	_launch_token = OS.get_environment(PROTOCOL.ENV_TOKEN)
 	if not launched_by_daemon and env_addr == "" and not connect_standalone:
 		auto_reconnect = false
 		return
@@ -153,7 +154,7 @@ func _process(_delta: float) -> void:
 			_sample_performance()
 			if not _said_hello:
 				_said_hello = true
-				var hello := {"type": "hello", "role": "game", "game": game_id}
+				var hello := {"type": PROTOCOL.MSG_HELLO, "role": PROTOCOL.ROLE_GAME, "game": game_id}
 				if _launch_token != "":
 					hello["token"] = _launch_token
 				_send(hello)
@@ -186,19 +187,19 @@ signal ready_sent(session_id: String)
 func notify_ready(session_id: String) -> void:
 	if session_id != session or phase != "preparing": return
 	phase = "ready"
-	_send({"type": "ready", "session": session_id})
+	_send({"type": PROTOCOL.MSG_READY, "session": session_id})
 	ready_sent.emit(session_id)
 
 ## Report a completed round. Keep your results screen and next-round flow in game.
 func notify_finished(session_id: String) -> void:
-	_send({"type": "finished", "session": session_id})
+	_send({"type": PROTOCOL.MSG_FINISHED, "session": session_id})
 
 ## Opt into live roster updates ([signal roster_changed]) for this session.
 ## Call it from [signal prepared], before [method notify_ready]. Pass
 ## `instant_join = true` only when a running match can take a new player at
 ## once; with false, newcomers wait for your next round.
 func notify_participation(session_id: String, instant_join: bool) -> void:
-	_send({"type": "participation", "session": session_id, "instant_join": instant_join})
+	_send({"type": PROTOCOL.MSG_PARTICIPATION, "session": session_id, "instant_join": instant_join})
 
 var _activity_at: Dictionary = {}
 
@@ -212,7 +213,7 @@ func report_activity(seat_index: int) -> void:
 	var now := Time.get_ticks_msec()
 	if now - int(_activity_at.get(token, -100000)) < 1000: return
 	_activity_at[token] = now
-	_send({"type": "controller_input", "session": session, "controller": token})
+	_send({"type": PROTOCOL.MSG_CONTROLLER_INPUT, "session": session, "controller": token})
 
 ## Declare the match settings the party may change (items on/off, stock
 ## count, arena...). Call once, any time after _ready(); the addon re-declares
@@ -227,7 +228,7 @@ func report_activity(seat_index: int) -> void:
 ## picked survive reconnects and are replayed right after declaring.
 func declare_settings(settings: Array) -> void:
 	_declared_settings = settings
-	_send({"type": "declare_settings", "settings": settings})
+	_send({"type": PROTOCOL.MSG_DECLARE_SETTINGS, "settings": settings})
 
 var _declared_settings: Array = []
 
@@ -235,7 +236,7 @@ var _declared_settings: Array = []
 ## Start menu, so the party's apps (and an LLM) show the same value. The daemon
 ## validates it and answers with [signal setting_changed], like any other write.
 func set_setting(key: String, value: Variant) -> void:
-	_send({"type": "set_setting", "key": key, "value": value})
+	_send({"type": PROTOCOL.MSG_SET_SETTING, "key": key, "value": value})
 
 ## Optional: give each player a screen of their own on their phone (see
 ## "Phone screens" in docs/protocol.md). `root` is an absolute directory the
@@ -244,7 +245,7 @@ func set_setting(key: String, value: Variant) -> void:
 ## "file-in-root.apk" or "https://..." }. Pass a page, an app or both.
 ## Re-declared automatically after every reconnect.
 func declare_companion(root: String = "", entry: String = "", app: Dictionary = {}) -> void:
-	var msg := {"type": "declare_companion"}
+	var msg := {"type": PROTOCOL.MSG_DECLARE_COMPANION}
 	if not root.is_empty(): msg["root"] = root
 	if not entry.is_empty(): msg["entry"] = entry
 	if not app.is_empty(): msg["app"] = app
@@ -306,7 +307,7 @@ func _companion_files(folder: String, prefix: String) -> Array:
 ## Send JSON to one player's phone page, or to every phone when `player_id`
 ## is empty. Answers arrive via [signal companion_message].
 func send_companion_message(data: Variant, player_id: String = "") -> void:
-	var msg := {"type": "companion_message", "data": data}
+	var msg := {"type": PROTOCOL.MSG_COMPANION_MESSAGE, "data": data}
 	if not player_id.is_empty(): msg["player_id"] = player_id
 	_send(msg)
 
@@ -320,7 +321,7 @@ signal companion_presence(player_id: String, connected: bool)
 ## "loading". Send as often as is useful; the daemon keeps the latest. A game
 ## that loads instantly never needs to call this.
 func notify_progress(session_id: String, percent: int, label: String = "") -> void:
-	var msg := {"type": "progress", "session": session_id, "percent": clampi(percent, 0, 100)}
+	var msg := {"type": PROTOCOL.MSG_PROGRESS, "session": session_id, "percent": clampi(percent, 0, 100)}
 	if label != "":
 		msg["label"] = label
 	_send(msg)
@@ -332,7 +333,7 @@ func notify_progress(session_id: String, percent: int, label: String = "") -> vo
 ## The one party command a game is allowed to send: a player stuck inside a
 ## game with no way out is the one failure the party cannot fix themselves.
 func request_overlay() -> void:
-	_send({"type": "request_overlay"})
+	_send({"type": PROTOCOL.MSG_REQUEST_OVERLAY})
 
 
 ## A player reached for this window directly — Cmd+Tab, a Dock click, a click
@@ -341,7 +342,7 @@ func request_overlay() -> void:
 ## means (start us if we're warm, resume us if we're paused, ignore it
 ## otherwise). Safe to send whenever focus arrives.
 func request_start() -> void:
-	_send({"type": "request_start"})
+	_send({"type": PROTOCOL.MSG_REQUEST_START})
 
 
 ## ── Seats ──────────────────────────────────────────────────────────────────
@@ -352,7 +353,7 @@ func local_seat_count(seats: Array) -> int:
 	var n := 0
 	for seat in seats:
 		if typeof(seat) == TYPE_DICTIONARY \
-				and str((seat.get("occupant", {}) as Dictionary).get("kind", "")) == "local":
+				and str((seat.get("occupant", {}) as Dictionary).get("kind", "")) == PROTOCOL.SEAT_OCCUPANT_LOCAL:
 			n += 1
 	return n
 
@@ -364,7 +365,7 @@ func ai_seat_count(seats: Array) -> int:
 	var n := 0
 	for seat in seats:
 		if typeof(seat) == TYPE_DICTIONARY \
-				and str((seat.get("occupant", {}) as Dictionary).get("kind", "")) == "ai":
+				and str((seat.get("occupant", {}) as Dictionary).get("kind", "")) == PROTOCOL.SEAT_OCCUPANT_AI:
 			n += 1
 	return n
 
@@ -512,9 +513,9 @@ func _handle(msg: Variant) -> void:
 	if typeof(msg) != TYPE_DICTIONARY:
 		return
 	var kind: String = msg.get("type", "")
-	if kind in ["start","pause","resume","dispose","party_updated"] and (session.is_empty() or msg.get("session","") != session): return
+	if kind in [PROTOCOL.MSG_START, PROTOCOL.MSG_PAUSE, PROTOCOL.MSG_RESUME, PROTOCOL.MSG_DISPOSE, PROTOCOL.MSG_PARTY_UPDATED] and (session.is_empty() or msg.get("session","") != session): return
 	match kind:
-		"welcome":
+		PROTOCOL.MSG_WELCOME:
 			if int(msg.get("godot_sdk", 0)) > SDK_VERSION:
 				push_warning("GameNight: this game's addons/gamenight (version %d) is older than GameNight's (%d). Update it with sdk/godot/sync.py." % [SDK_VERSION, int(msg.get("godot_sdk", 0))])
 			party = msg.get("party", {})
@@ -523,24 +524,24 @@ func _handle(msg: Variant) -> void:
 			# A reconnect: re-declare so the daemon replays any values the
 			# party changed while we were away.
 			if not _declared_settings.is_empty():
-				_send({"type": "declare_settings", "settings": _declared_settings})
+				_send({"type": PROTOCOL.MSG_DECLARE_SETTINGS, "settings": _declared_settings})
 			if not _declared_companion.is_empty():
 				_send(_declared_companion)
-		"party_state":
+		PROTOCOL.MSG_PARTY_STATE:
 			party = msg.get("party", {})
 			party_updated.emit(party)
-		"controller_frame":
+		PROTOCOL.MSG_CONTROLLER_FRAME:
 			_frames.clear()
 			_frame_at = Time.get_ticks_msec()
 			for frame in msg.get("controllers",[]):
 				var token := str(frame.get("controller",""))
 				if not token.is_empty() and not _frames.has(token): _frames[token] = frame
 			controllers_changed.emit(msg.get("controllers",[]))
-		"party_updated":
+		PROTOCOL.MSG_PARTY_UPDATED:
 			for key in ["seats","players","presence"]: party[key] = msg.get(key,[])
 			roster_changed.emit(party.seats,party.players,party.presence)
 			party_updated.emit(party)
-		"prepare":
+		PROTOCOL.MSG_PREPARE:
 			if msg.get("game", game_id) != game_id or msg.get("session", "").is_empty() or msg.get("session", "") == session: return
 			if not session.is_empty(): disposed.emit(session)
 			session = msg.session
@@ -550,39 +551,39 @@ func _handle(msg: Variant) -> void:
 			party["players"] = msg.get("players",[])
 			_reset_performance(msg.get("session", ""))
 			prepared.emit(msg.get("session", ""), msg.get("seats", []), msg.get("players", []))
-		"start":
+		PROTOCOL.MSG_START:
 			if phase != "ready": return
 			phase = "running"
 			_performance_running = msg.get("session", "") == _performance_session
 			_hold_buttons()
 			started.emit(msg.get("session", ""))
-		"pause":
+		PROTOCOL.MSG_PAUSE:
 			if phase != "running": return
 			phase = "paused"
 			_performance_running = false
 			_performance_last_us = 0
 			paused.emit(msg.get("session", ""))
-		"resume":
+		PROTOCOL.MSG_RESUME:
 			if phase != "paused": return
 			phase = "running"
 			_performance_running = msg.get("session", "") == _performance_session
 			_hold_buttons()
 			resumed.emit(msg.get("session", ""))
-		"dispose":
+		PROTOCOL.MSG_DISPOSE:
 			_performance_running = false
 			disposed.emit(session)
 			session = ""
 			phase = "idle"
 			_frames.clear()
-		"setting_changed":
+		PROTOCOL.MSG_SETTING_CHANGED:
 			var value: Variant = msg.get("value")
 			if value is float:
 				# JSON numbers parse as float; number settings are integers.
 				value = int(value)
 			setting_changed.emit(msg.get("key", ""), value)
-		"companion_message":
+		PROTOCOL.MSG_COMPANION_MESSAGE:
 			companion_message.emit(str(msg.get("player_id", "")), msg.get("data"))
-		"companion_presence":
+		PROTOCOL.MSG_COMPANION_PRESENCE:
 			companion_presence.emit(str(msg.get("player_id", "")), bool(msg.get("connected", false)))
-		"error":
+		PROTOCOL.MSG_ERROR:
 			push_warning("GameNight daemon: %s" % msg.get("message", "unknown error"))
