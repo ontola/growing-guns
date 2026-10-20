@@ -1,0 +1,37 @@
+{
+  "$schema": "https://raw.githubusercontent.com/ontola/gamenight/main/catalog/schema.json",
+  "id": "growing-guns",
+  "title": "Growing Guns",
+  "tagline": "Fast arena FPS — the loser of each round picks the upgrade.",
+  "developer": "Joep Meindertsma",
+  "players": {
+    "min": 2,
+    "max": 4,
+    "best": 2
+  },
+  "match_minutes": 5,
+  "price": "free",
+  "tags": [
+    "versus",
+    "fps",
+    "arena",
+    "splitscreen",
+    "godot"
+  ],
+  "emoji": "🔫",
+  "color": "#ffb454",
+  "integration": {
+    "level": "integrated",
+    "protocol": 1
+  },
+  "requirements": {
+    "disk_mb": 400,
+    "ram_mb": 2048,
+    "cpu": "any dual-core",
+    "gpu": "anything with Vulkan/Metal (integrated is fine)"
+  },
+  "links": {
+    "itch": "https://joepio.itch.io/growing-guns",
+    "source": "https://github.com/joepio/growing-guns"
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "game": "growing-guns",
+  "generated_on": "2026-10-20",
+  "generator": "Built-in image_gen",
+  "use": "Illustrated promotional cover, not a gameplay screenshot",
+  "prompt": "Use case: stylized-concept. Create finished premium indie game cover key art for GameNight, portrait 3:4 composition ideally 1536x2048, full bleed. Title exactly 'GROWING GUNS', huge two-line cream slab lettering with orange dimensional edges in upper quarter, easily legible as a thumbnail with generous safe margins. Supplied screenshot is visual reference for real destructible stone arena and geometric weapon, reimagine as richly authored cover art, not a screenshot with text. An absurdly oversized modular dark-metal rifle bursts diagonally into the foreground from a gloved first-person grip: stacked boxy magazines, exaggerated extended barrel and angular receiver, showing the game's weapon-upgrade escalation. In the middle distance two small armored arena fighters dodge among chunky pale sandstone towers as a projectile shatters one into flying stone blocks. Surrounding grand circular colosseum packed with tiny multicolored spectators, red hanging banners. Energetic stylized 3D-meets-painted illustration, warm dusty amber light with cool steel shadows, forceful angular composition, readable silhouette, clear front/middle/background depth. Competitive playful arena shooter, not military realism. No gore, no plants growing out of guns, no vegetation theme, no UI, no badges, no publisher branding, no extra text, no watermark.",
+  "reference": "reference.png",
+  "master": "cover-source.png",
+  "runtime": "../../../assets/gamenight/cover.png",
+  "export": {
+    "width": 360,
+    "height": 480,
+    "format": "indexed PNG",
+    "max_bytes": 262144,
+    "colors": 256,
+    "command": "magick cover-source.png -resize 360x480! -strip -dither FloydSteinberg -colors 256 -define png:compression-level=9 PNG8:cover.png"
+  },
+  "review": "Actual game rendered and inspected; generated master and final 360x480 cover visually reviewed. Promotional illustration, not gameplay.",
+  "source_revision": "0af39763349c9000ed01fc3f9e82309594de95db"
+}
