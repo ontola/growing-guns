@@ -395,6 +395,26 @@ func ai_seat_count(seats: Array) -> int:
 	return n
 
 
+## `seats` in couch order, left to right: where each player chose to sit in
+## the lobby's Start menu (`players[].couch`). Lay split-screen views and
+## anything else that runs left to right out in this order. Seats without
+## a known couch place (bots, empty seats, older hosts) keep seat order
+## after the people. Players can move during a match: call it again on
+## [signal players_updated].
+static func couch_order(seats: Array, players: Array) -> Array:
+	var place := {}
+	for player in players:
+		if typeof(player) == TYPE_DICTIONARY and player.get("couch") != null:
+			place[str(player.get("id", ""))] = int(player.couch)
+	var keyed := []
+	for seat in seats:
+		if typeof(seat) != TYPE_DICTIONARY: continue
+		var id := str((seat.get("occupant", {}) as Dictionary).get("player_id", ""))
+		keyed.append([place.get(id, 1000), int(seat.get("index", 0)), seat])
+	keyed.sort_custom(func(a, b): return a[0] < b[0] or (a[0] == b[0] and a[1] < b[1]))
+	return keyed.map(func(entry): return entry[2])
+
+
 ## Standalone-only convenience. Managed games must use frame_for_seat instead.
 func devices_for_local_seats(count: int) -> Array:
 	if launched_by_daemon:
