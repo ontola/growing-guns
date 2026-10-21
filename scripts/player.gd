@@ -2488,6 +2488,10 @@ func _rifle_fired(
 		spawn_shot_fx = bool(shooter_node.call("_consume_shot_fx_budget"))
 	if spawn_shot_fx and not (BenchFlags.active and BenchFlags.no_shot_audio):
 		SFX.shot(w, origin, is_self, silenced, last_in_mag)
+	if is_self and shooter_node and shooter_node.has_method("rumble"):
+		# A light kick per shot, heavier for the big guns.
+		var heft: float = clampf(w.get_damage_for_shot(last_in_mag) / Weapon.BASE_DAMAGE / 4.0, 0.0, 1.0)
+		shooter_node.rumble(lerpf(0.25, 0.55, heft), lerpf(0.0, 0.7, heft), lerpf(0.06, 0.16, heft))
 
 	# Bench A/B: skip bullet spawning entirely (one static bool branch out
 	# of bench mode). See scripts/bench_flags.gd.
@@ -3493,6 +3497,16 @@ func _spawn_grenade_visual(origin: Vector3, dir: Vector3, shooter: int, uname: S
 	# spin the frag flew perfectly upright (Joep, 2026-10-21).
 	_spin_thrown(g as RigidBody3D, dir)
 
+## Vibrate this player's controller when it is a GameNight seat. Real pads
+## and bots are left alone.
+func rumble(weak: float, strong: float, seconds: float) -> void:
+	if is_bot or not GameNight.launched_by_daemon:
+		return
+	var seat: int = GameNightBridge.seat_pads.seat_for_device(local_input_device)
+	if seat >= 0:
+		GameNight.rumble(seat, weak, strong, seconds)
+
+
 static func _spin_thrown(body: RigidBody3D, dir: Vector3) -> void:
 	var side := dir.cross(Vector3.UP)
 	if side.length_squared() < 0.0001:
@@ -3808,6 +3822,7 @@ func _apply_damage(
 		# the current pre-scaling response.
 		var hit_intensity: float = clampf(float(amount) / 25.0, 0.04, 2.0)
 		SFX.hit_received(hit_intensity)
+		rumble(0.35, clampf(0.3 + hit_intensity * 0.35, 0.0, 1.0), 0.12 + hit_intensity * 0.1)
 
 		# View punch: shift camera in the direction of the hit, scaled by
 		# the same intensity so poison ticks stop yanking the camera.
@@ -3923,6 +3938,7 @@ func _execute_lethal_death(
 ) -> void:
 	if not suppress_death_sound:
 		_play_death_sound.rpc(global_position)
+	rumble(0.6, 1.0, 0.45)
 	if _hell_emerging:
 		_abort_hell_emerge()
 	if is_bot:

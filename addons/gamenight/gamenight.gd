@@ -214,6 +214,32 @@ func notify_participation(session_id: String, instant_join: bool) -> void:
 
 var _activity_at: Dictionary = {}
 
+var _rumble_sent: Dictionary = {}
+
+## Vibrate the controller on this seat: `weak` is the light, buzzy motor
+## (road surface, texture), `strong` the heavy one (impacts, grip loss), both
+## 0 to 1, for `seconds` (at most 5). Each call replaces the last one for that
+## seat, so call it a few times a second while the effect lasts and with
+## zeros to stop. The host drives the pad; it only works while your session
+## runs in front. Standalone, it vibrates the seat's local joypad.
+func rumble(seat_index: int, weak: float, strong: float, seconds: float) -> void:
+	weak = clampf(weak, 0.0, 1.0)
+	strong = clampf(strong, 0.0, 1.0)
+	var quiet := weak == 0.0 and strong == 0.0
+	if not launched_by_daemon:
+		var devices := Input.get_connected_joypads()
+		if seat_index < 0 or seat_index >= devices.size(): return
+		if quiet: Input.stop_joy_vibration(devices[seat_index])
+		else: Input.start_joy_vibration(devices[seat_index], weak, strong, seconds)
+		return
+	if session.is_empty() or phase != "running": return
+	# One stop is enough; repeated zeros would only flood the socket.
+	if quiet and _rumble_sent.get(seat_index, true) == true: return
+	_rumble_sent[seat_index] = quiet
+	_send({"type": PROTOCOL.MSG_RUMBLE, "session": session, "seat": seat_index,
+		"weak": int(weak * 65535.0), "strong": int(strong * 65535.0),
+		"ms": clampi(int(seconds * 1000.0), 0, 5000)})
+
 ## Tell GameNight a person is really playing on this seat's controller, so the
 ## party does not mark them asleep. Call it on meaningful input (a press, a
 ## stick past its deadzone); it sends at most once a second per controller.

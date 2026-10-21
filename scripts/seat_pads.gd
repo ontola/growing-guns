@@ -75,6 +75,11 @@ func devices() -> Array:
 	return out
 
 
+## The host seat a virtual pad drives, or -1 for a real pad.
+func seat_for_device(device: int) -> int:
+	return int(_seats.get(device, -1))
+
+
 func is_seat_device(device: int) -> bool:
 	return _seats.has(device)
 
