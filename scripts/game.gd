@@ -794,6 +794,13 @@ func _handle_global_cancel_or_pause(event: InputEvent) -> bool:
 
 
 func _input(event: InputEvent) -> void:
+	# Under a daemon, pads are the seats' virtual devices; the native copy of
+	# the same press (Windows gives the game the real pads too) would act a
+	# second time. See GameNightBridge._restrict_pad_actions_to.
+	if GameNight.launched_by_daemon and (event is InputEventJoypadButton or event is InputEventJoypadMotion) \
+			and event.device < GameNightBridge.seat_pads.DEVICE_BASE:
+		get_viewport().set_input_as_handled()
+		return
 	_track_input_device(event)
 	if _handle_global_cancel_or_pause(event):
 		get_viewport().set_input_as_handled()
@@ -5124,11 +5131,15 @@ func _gn_scaffold(node_name: String, heading: String) -> Dictionary:
 	backdrop.set_anchors_preset(Control.PRESET_FULL_RECT)
 	root.add_child(backdrop)
 
-	var logo := Label.new()
-	logo.text = "GROWING\nGUNS"
-	UiStyle.display_label(logo, 78, 5)
-	logo.add_theme_constant_override("line_spacing", -36)
-	logo.position = Vector2(GN_MENU_LEFT, 26.0)
+	# The real logo, the one on the cover art (Joep, 2026-10-21: a typed
+	# "GROWING GUNS" did not match it).
+	var logo := TextureRect.new()
+	logo.texture = preload("res://assets/branding/logo.png")
+	logo.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	logo.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT
+	logo.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	logo.position = Vector2(GN_MENU_LEFT - 12.0, 28.0)
+	logo.size = Vector2(408.0, 170.0)
 	root.add_child(logo)
 
 	var status := Label.new()

@@ -77,27 +77,19 @@ func _draw() -> void:
 	var edge := GOLD if is_rare() else col
 	var full := Rect2(Vector2.ZERO, size)
 
-	# Ground: near black with faint diagonal hatching in the card colour.
+	# Ground: near black, tinted with the card colour. Plain: the diagonal
+	# hatching that used to be here went (Joep, 2026-10-21).
 	draw_rect(full, UiStyle.INK.lerp(col, 0.06))
-	var hatch := Color(col, 0.05)
-	var step := 9.0 * k
-	var x := -size.y
-	while x < size.x:
-		draw_line(Vector2(x, size.y), Vector2(x + size.y, 0.0), hatch, maxf(1.0, 2.0 * k))
-		x += step
 
-	# Art panel with a sunburst behind the icon.
+	# Art panel with a soft glow behind the icon. It had a striped sunburst,
+	# which went with the hatching (Joep, 2026-10-21).
 	var art_h := (112.0 - maxf(0.0, stats.size() - 2.0) * 15.0) * k
 	art_h = maxf(art_h, 70.0 * k)
 	var art := Rect2(10.0 * k, 32.0 * k, size.x - 18.0 * k, art_h)
 	draw_rect(art, UiStyle.INK.darkened(0.35))
 	var c := art.get_center()
-	var reach := art.size.length()
-	for i in 16:
-		var a0 := TAU * float(i) / 16.0
-		var a1 := a0 + TAU / 32.0
-		var ray := PackedVector2Array([c, c + Vector2(cos(a0), sin(a0)) * reach, c + Vector2(cos(a1), sin(a1)) * reach])
-		draw_colored_polygon(_clip_poly(ray, art), Color(edge, 0.16))
+	for i in 6:
+		draw_circle(c, art.size.y * lerpf(0.5, 0.38, float(i) / 5.0), Color(edge, 0.045))
 	draw_circle(c, art.size.y * 0.36, Color(edge, 0.18))
 	var icon_s := minf(art.size.y * 0.72, 80.0 * k)
 	var icon_rect := Rect2(c - Vector2(icon_s, icon_s) * 0.5, Vector2(icon_s, icon_s))

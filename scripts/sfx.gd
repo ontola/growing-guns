@@ -53,7 +53,9 @@ var _card_flip_order: Array[int] = []
 var _card_flip_idx: int = 0
 
 # Tunable mix knobs — adjust live via scenes/action_lab.tscn.
-var shot_self_db: float = -10.0
+# Own shots: +8 dB after the Mancave playtest (Joep, 2026-10-21: "mogen wel
+# wat harder"); the master limiter keeps stacked bursts from clipping.
+var shot_self_db: float = -2.0
 var shot_world_db: float = 5.0
 var shot_dmg_per_double_db: float = 6.0
 var shot_pitch_per_double: float = 0.20  # 0..1; pitch drop per damage doubling

@@ -282,6 +282,9 @@ var _legs_hitbox_rest_y: float = -0.55
 var reload_offset: Vector3 = Vector3.ZERO
 var _reload_tween: Tween = null
 var _mag_reload_tween: Tween = null
+# The third-person reload, separate from the first-person one: a splitscreen
+# player runs both (their own view, and the body the other views see).
+var _tp_reload_tween: Tween = null
 var _reload_audio: Node = null
 var _camera_rest_pos: Vector3
 var _landing_bump_y: float = 0.0
@@ -1093,7 +1096,7 @@ func _update_third_person_aim_pitch(delta: float) -> void:
 		return
 	# The reload flourish tweens the SAME rotation property — fighting it
 	# every frame left the gun wedged between the two writers.
-	if _reload_tween and _reload_tween.is_valid() and _reload_tween.is_running():
+	if _tp_reload_tween and _tp_reload_tween.is_valid() and _tp_reload_tween.is_running():
 		return
 	var want_x := _third_person_gun_rest_rot.x + pitch
 	_third_person_gun.rotation.x = lerp_angle(
@@ -3010,7 +3013,11 @@ func _lava_death(fall_death: bool) -> void:
 	if body_model:
 		body_model.visible = true
 	var scene := get_tree().current_scene
-	if is_multiplayer_authority() and not split_screen_local:
+	# Splitscreen players too: show_death_effect_for routes to their own
+	# view. Leaving them out kept a player's camera running under the lava,
+	# most visibly for a round's winner who fell in after winning (Joep,
+	# 2026-10-21).
+	if is_multiplayer_authority() and not is_bot:
 		if scene and scene.has_method("show_death_effect_for"):
 			scene.show_death_effect_for(player_id, true)
 		elif scene and scene.has_method("show_death_effect"):
@@ -3129,6 +3136,10 @@ func _reload_started(duration: float) -> void:
 		_animate_reload(duration)
 		_stop_reload_audio()
 		_reload_audio = SFX.reload(duration)
+		# On a shared screen the other players look at this body: it has to
+		# reload too, or a couch match never shows anyone reloading.
+		if split_screen_local:
+			_animate_third_person_reload(duration)
 	else:
 		_animate_third_person_reload(duration)
 		_stop_reload_audio()
@@ -3149,6 +3160,9 @@ func _reset_weapon_combat_state() -> void:
 	if _mag_reload_tween and _mag_reload_tween.is_valid():
 		_mag_reload_tween.kill()
 		_mag_reload_tween = null
+	if _tp_reload_tween and _tp_reload_tween.is_valid():
+		_tp_reload_tween.kill()
+		_tp_reload_tween = null
 	reload_offset = Vector3.ZERO
 	if muzzle:
 		muzzle.rotation.x = 0.0
@@ -3226,21 +3240,41 @@ func _set_reload_offset(v: Vector3) -> void:
 func _animate_third_person_reload(duration: float) -> void:
 	if _third_person_gun == null:
 		return
+	if _tp_reload_tween and _tp_reload_tween.is_valid():
+		_tp_reload_tween.kill()
 	_third_person_gun.position = _third_person_gun_rest_pos
 	_third_person_gun.rotation = _third_person_gun_rest_rot
-	var lift := _third_person_gun_rest_pos + Vector3(0.0, 0.1, 0.04)
-	var tilt := _third_person_gun_rest_rot + Vector3(deg_to_rad(-22.0), deg_to_rad(10.0), deg_to_rad(7.0))
-	if _reload_tween and _reload_tween.is_valid():
-		_reload_tween.kill()
-	_reload_tween = create_tween().set_parallel(true)
-	_reload_tween.tween_property(_third_person_gun, "position", lift, duration * 0.22)\
-		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
-	_reload_tween.tween_property(_third_person_gun, "rotation", tilt, duration * 0.22)\
-		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
-	_reload_tween.tween_property(_third_person_gun, "position", _third_person_gun_rest_pos, duration * 0.24)\
-		.set_delay(duration * 0.68).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
-	_reload_tween.tween_property(_third_person_gun, "rotation", _third_person_gun_rest_rot, duration * 0.24)\
-		.set_delay(duration * 0.68).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
+	# Gun pulled in toward the chest, muzzle up and rolled onto its side so
+	# the magazine well faces the off hand: the pose reads as "reloading"
+	# from across the arena.
+	var pulled := _third_person_gun_rest_pos + Vector3(0.0, 0.08, 0.12)
+	var tilted := _third_person_gun_rest_rot + Vector3(deg_to_rad(32.0), deg_to_rad(-12.0), deg_to_rad(-38.0))
+	_tp_reload_tween = create_tween().set_parallel(true)
+	_tp_reload_tween.tween_property(_third_person_gun, "position", pulled, duration * 0.2)\
+		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	_tp_reload_tween.tween_property(_third_person_gun, "rotation", tilted, duration * 0.2)\
+		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	# Seating the new magazine knocks the gun up a little.
+	_tp_reload_tween.tween_property(_third_person_gun, "position", pulled + Vector3(0.0, 0.03, 0.0), duration * 0.06)\
+		.set_delay(duration * 0.6).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	_tp_reload_tween.tween_property(_third_person_gun, "position", _third_person_gun_rest_pos, duration * 0.22)\
+		.set_delay(duration * 0.72).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	_tp_reload_tween.tween_property(_third_person_gun, "rotation", _third_person_gun_rest_rot, duration * 0.22)\
+		.set_delay(duration * 0.72).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	# The magazine drops out, and a fresh one slides up into the well.
+	var mag: Node3D = null
+	if _third_person_procedural_gun:
+		mag = _third_person_procedural_gun.get_node_or_null("Magazine") as Node3D
+	if mag:
+		var rest: Vector3 = mag.position
+		var below: Vector3 = rest + Vector3(0.0, -0.35, 0.0)
+		_tp_reload_tween.tween_property(mag, "position", below, duration * 0.14)\
+			.set_delay(duration * 0.18).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+		_tp_reload_tween.tween_callback(func() -> void:
+			if is_instance_valid(mag):
+				mag.position = rest + Vector3(0.0, -0.12, 0.0)).set_delay(duration * 0.4)
+		_tp_reload_tween.tween_property(mag, "position", rest, duration * 0.16)\
+			.set_delay(duration * 0.44).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 
 # -------------------- TELEPORT --------------------
 
@@ -3455,6 +3489,17 @@ func _spawn_grenade_visual(origin: Vector3, dir: Vector3, shooter: int, uname: S
 	get_tree().current_scene.add_child(g)
 	g.global_position = origin + dir * 0.6
 	g.linear_velocity = dir * GRENADE_LAUNCH_SPEED + Vector3(0.0, GRENADE_LAUNCH_LIFT, 0.0)
+	# Tumble end over end like a thrown grenade, with a little wobble; with no
+	# spin the frag flew perfectly upright (Joep, 2026-10-21).
+	_spin_thrown(g as RigidBody3D, dir)
+
+static func _spin_thrown(body: RigidBody3D, dir: Vector3) -> void:
+	var side := dir.cross(Vector3.UP)
+	if side.length_squared() < 0.0001:
+		side = Vector3.RIGHT
+	body.angular_velocity = side.normalized() * -randf_range(8.0, 12.0) \
+		+ Vector3(randf_range(-2.5, 2.5), randf_range(-2.5, 2.5), randf_range(-2.5, 2.5))
+
 
 func _place_mine() -> void:
 	var pos := _mine_position()

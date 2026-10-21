@@ -514,6 +514,7 @@ func _spawn_cluster_fragments(origin: Vector3, shooter: int) -> void:
 		dir = dir.rotated(Vector3.UP, rng.randf_range(-0.35, 0.35))
 		g.linear_velocity = dir * (FRAGMENT_LAUNCH_SPEED + rng.randf_range(-1.5, 2.0)) \
 			+ Vector3(0.0, FRAGMENT_LAUNCH_LIFT + rng.randf_range(-0.5, 1.0), 0.0)
+		g.angular_velocity = Vector3(rng.randf_range(-12.0, 12.0), rng.randf_range(-6.0, 6.0), rng.randf_range(-12.0, 12.0))
 
 
 @rpc("authority", "call_local", "reliable")

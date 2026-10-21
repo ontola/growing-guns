@@ -216,6 +216,7 @@ func _bind_gamenight_seats() -> void:
 	# GameNight owns the pads: a seat names a host controller, not a Godot
 	# joystick, so each seat drives a virtual pad fed from the host's stream.
 	var devices := seat_pads.bind(_pending_seats)
+	_restrict_pad_actions_to(devices)
 	if _local_seat_count >= 2:
 		splitscreen.bind_seats(devices)
 	elif not devices.is_empty():
@@ -261,6 +262,51 @@ func _apply_party_identities() -> void:
 		changed = true
 	if changed and game.has_method("_update_scoreboard"):
 		game._update_scoreboard()
+
+
+## Joypad bindings, per action, as the game set them up for "any pad".
+var _any_pad_events: Dictionary = {}
+
+
+## Under a daemon the party's pads are read through GameNight's stream, but
+## Windows still hands the same pads to the game as native joysticks. With
+## the input map on "any pad" every press then arrived twice, once native and
+## once from the stream a tick later: Start opened the menu and the echo shut
+## it again (Joep, 2026-10-21). Bind the actions to the seats' virtual pads
+## only; game.gd drops the native events that reach _input directly.
+func _restrict_pad_actions_to(devices: Array) -> void:
+	for action: StringName in InputMap.get_actions():
+		var templates: Array = _any_pad_events.get(action, [])
+		for ev: InputEvent in InputMap.action_get_events(action):
+			if not (ev is InputEventJoypadButton or ev is InputEventJoypadMotion):
+				continue
+			if ev.device >= seat_pads.DEVICE_BASE:
+				InputMap.action_erase_event(action, ev)  # last session's seats
+				continue
+			var any := ev.duplicate() as InputEvent
+			any.device = -1
+			var known := false
+			for t: InputEvent in templates:
+				known = known or _same_pad_input(t, any)
+			if not known:
+				templates.append(any)
+			InputMap.action_erase_event(action, ev)
+		if templates.is_empty():
+			continue
+		_any_pad_events[action] = templates
+		for t: InputEvent in templates:
+			for device in devices:
+				var bound := t.duplicate() as InputEvent
+				bound.device = int(device)
+				InputMap.action_add_event(action, bound)
+
+
+static func _same_pad_input(a: InputEvent, b: InputEvent) -> bool:
+	if a is InputEventJoypadButton and b is InputEventJoypadButton:
+		return a.button_index == b.button_index
+	if a is InputEventJoypadMotion and b is InputEventJoypadMotion:
+		return a.axis == b.axis and signf(a.axis_value) == signf(b.axis_value)
+	return false
 
 
 ## One seated human, so no splitscreen — but still a controller player. The

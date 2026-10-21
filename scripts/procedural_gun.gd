@@ -45,8 +45,8 @@ extends Node3D
 @export var pistol_grip_radius: float = 0.024 : set = _set_pistol_grip_radius
 @export var pistol_grip_tilt_deg: float = -36.0 : set = _set_pistol_grip_tilt_deg
 @export var trigger_guard_radius: float = 0.028 : set = _set_trigger_guard_radius
-@export var stock_size: Vector3 = Vector3(0.05, 0.07, 0.16) : set = _set_stock_size
-@export var stock_taper: float = 0.45 : set = _set_stock_taper  # front height as fraction of back
+@export var stock_size: Vector3 = Vector3(0.05, 0.09, 0.2) : set = _set_stock_size
+@export var stock_taper: float = 0.7 : set = _set_stock_taper  # front height as fraction of back
 @export var has_stock: bool = true : set = _set_has_stock
 @export var has_foregrip: bool = true : set = _set_has_foregrip
 
@@ -597,21 +597,17 @@ func animate_weapon_growth(from_w: Weapon, to_w: Weapon, duration: float = 2.0) 
 func is_growing() -> bool:
 	return _grow_to != null
 
-# easeInOutBack — anticipation squash below zero at the start (the gun
-# tenses), rapid growth through the middle of the fall, ~9% overshoot near
-# the end, settled just before landing. easeOutBack was wrong here: it hits
-# ~100% at t≈0.4, so the morph looked already-finished by the time the
-# player's screen caught up with the round transition.
+# Smootherstep: slow start, the growth through the middle, a soft landing.
+# It used to be easeInOutBack, but its dip below 0 and overshoot past 1 sent
+# the on/off parts (stock, scope, drum mag, shroud) back and forth across
+# their thresholds, so they popped in and out mid-morph: the glitch Joep saw
+# (2026-10-21). A monotonic curve crosses each threshold once.
 static func _grow_ease(t: float) -> float:
 	t = clampf(t, 0.0, 1.0)
-	var c2: float = 1.70158 * 1.525
-	if t < 0.5:
-		return (4.0 * t * t * ((c2 + 1.0) * 2.0 * t - c2)) * 0.5
-	var u: float = 2.0 * t - 2.0
-	return (u * u * ((c2 + 1.0) * u + c2) + 2.0) * 0.5
+	return t * t * t * (t * (t * 6.0 - 15.0) + 10.0)
 
 # Blend only the fields apply_weapon_stats reads; everything else stays at
-# Weapon defaults. The ease overshoots (t > 1), so clamp hard floors.
+# Weapon defaults. Floors stay clamped in case a caller passes t outside 0..1.
 static func _lerp_weapon(a: Weapon, b: Weapon, t: float) -> Weapon:
 	var w := Weapon.new()
 	w.spread = maxf(0.0, lerpf(a.spread, b.spread, t))
@@ -685,15 +681,11 @@ func _rebuild_impl() -> void:
 	# Receiver body
 	_add_box("Receiver", effective_receiver_size, Vector3.ZERO, metal)
 	# Break up the receiver box: a darker anodised lower receiver, an
-	# ejection port on the right, and two machined grooves along each side.
+	# ejection port on the right.
 	var rs := effective_receiver_size
 	var recess := _make_material(receiver_color * 0.2, 0.3, 0.8)
 	_add_box("LowerReceiver", Vector3(rs.x * 1.04, rs.y * 0.34, rs.z * 0.92), Vector3(0, -rs.y * 0.34, rs.z * 0.02), darker_metal)
 	_add_box("EjectionPort", Vector3(0.004, rs.y * 0.26, rs.z * 0.3), Vector3(rs.x * 0.5 + 0.001, rs.y * 0.14, -rs.z * 0.12), recess)
-	for side: float in [-1.0, 1.0]:
-		for k in 2:
-			_add_box("Groove%d%s" % [k, "L" if side < 0.0 else "R"], Vector3(0.003, 0.004, rs.z * 0.8),
-				Vector3(side * (rs.x * 0.5 + 0.0005), rs.y * (0.36 - k * 0.1), 0.0), recess)
 
 
 	# Charging handle (bolt) — a horizontal knob sticking out perpendicular
@@ -799,10 +791,8 @@ func _rebuild_impl() -> void:
 		var mag := _add_box("Magazine", mag_size, Vector3(0, mag_y, mag_offset_z), polymer)
 		mag.rotation = Vector3(deg_to_rad(mag_tilt_deg), 0, 0)
 		mag.position = Vector3(0, mag_y, mag_offset_z)
-		# Grip ribs across the magazine.
-		for k in 3:
-			_add_box("MagRib%d" % k, Vector3(mag_size.x * 1.06, 0.006, mag_size.z * 1.06),
-				Vector3(0, mag_size.y * (0.2 - k * 0.18), 0), darker_metal, mag)
+		# A metal base plate closes the magazine off at the bottom.
+		_add_box("MagBase", Vector3(mag_size.x * 1.1, 0.012, mag_size.z * 1.15), Vector3(0, -mag_size.y * 0.5, 0), darker_metal, mag)
 
 	# Handguard + foregrip (only when the gun bracing is "on" — full-auto)
 	if has_foregrip:
@@ -843,6 +833,10 @@ func _rebuild_impl() -> void:
 		stock_rear_z = back_z + half_z
 		_add_box("StockBack", Vector3(stock_size.x, back_h, half_z), Vector3(0, bottom_y + back_h * 0.5, back_z), polymer)
 		_add_box("StockFront", Vector3(stock_size.x * 0.95, front_h, half_z), Vector3(0, bottom_y + front_h * 0.5, front_z), polymer)
+		# Rubber butt pad: a dark end cap, so the stock ends in something.
+		var pad_d: float = 0.012
+		_add_box("ButtPad", Vector3(stock_size.x * 1.04, back_h * 1.04, pad_d), Vector3(0, bottom_y + back_h * 0.5, stock_rear_z + pad_d * 0.5), _make_polymer(Color(0.07, 0.07, 0.075)))
+		stock_rear_z += pad_d
 
 	# Plain launcher tube off the receiver rear — replaces the rifle stock.
 	# Diameter matches receiver height so the tube reads as the same body.
@@ -1026,15 +1020,78 @@ func _add_barrel_shroud(
 static var _mesh_cache: Dictionary = {}
 
 
-static func _cached_box_mesh(size: Vector3) -> BoxMesh:
+static func _cached_box_mesh(size: Vector3) -> Mesh:
 	var key := ["b",
 		snappedf(size.x, 0.0005), snappedf(size.y, 0.0005), snappedf(size.z, 0.0005)]
-	var m: BoxMesh = _mesh_cache.get(key)
+	var m: Mesh = _mesh_cache.get(key)
 	if m == null:
-		m = BoxMesh.new()
-		m.size = size
+		m = _chamfered_box(size)
 		_mesh_cache[key] = m
 	return m
+
+
+## A box with its edges bevelled. Hard 90-degree box edges were most of why
+## the guns looked like grey lumps: a small chamfer catches the light along
+## every edge, which is what makes machined metal read as metal.
+static func _chamfered_box(size: Vector3) -> ArrayMesh:
+	var h := size * 0.5
+	var b := minf(minf(size.x, minf(size.y, size.z)) * 0.22, 0.008)
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var cycle: Array[Vector2] = [Vector2(-1, -1), Vector2(1, -1), Vector2(1, 1), Vector2(-1, 1)]
+	for a in 3:
+		var u := (a + 1) % 3
+		var v := (a + 2) % 3
+		for sa: float in [-1.0, 1.0]:
+			# The flat face on this side.
+			var face: Array[Vector3] = []
+			for c in cycle:
+				var s := Vector3.ZERO
+				s[a] = sa; s[u] = c.x; s[v] = c.y
+				face.append(_chamfer_point(h, b, s, a))
+			_chamfer_polygon(st, face)
+		for c in cycle:
+			# The bevel along the edge parallel to axis a.
+			var lo := Vector3.ZERO
+			lo[a] = -1.0; lo[u] = c.x; lo[v] = c.y
+			var hi := lo
+			hi[a] = 1.0
+			_chamfer_polygon(st, [_chamfer_point(h, b, lo, u), _chamfer_point(h, b, hi, u),
+				_chamfer_point(h, b, hi, v), _chamfer_point(h, b, lo, v)])
+	for x: float in [-1.0, 1.0]:
+		for y: float in [-1.0, 1.0]:
+			for z: float in [-1.0, 1.0]:
+				var s := Vector3(x, y, z)
+				_chamfer_polygon(st, [_chamfer_point(h, b, s, 0), _chamfer_point(h, b, s, 1), _chamfer_point(h, b, s, 2)])
+	return st.commit()
+
+
+## The corner `s` (signs per axis) of the face that looks along `axis`.
+static func _chamfer_point(h: Vector3, b: float, s: Vector3, axis: int) -> Vector3:
+	var p := Vector3.ZERO
+	for i in 3:
+		p[i] = s[i] * (h[i] if i == axis else h[i] - b)
+	return p
+
+
+## A flat convex polygon around the origin, fanned into triangles that face
+## outward (Godot's front faces wind clockwise).
+static func _chamfer_polygon(st: SurfaceTool, pts: Array) -> void:
+	var centre := Vector3.ZERO
+	for p: Vector3 in pts:
+		centre += p
+	centre /= float(pts.size())
+	var a: Vector3 = pts[0]
+	var n: Vector3 = (pts[1] - a).cross(pts[2] - a)
+	var flip := n.dot(centre) > 0.0
+	var normal := (-n if flip else n).normalized() * -1.0
+	for i in range(1, pts.size() - 1):
+		var tri: Array = [a, pts[i], pts[i + 1]]
+		if flip:
+			tri = [a, pts[i + 1], pts[i]]
+		for p: Vector3 in tri:
+			st.set_normal(normal)
+			st.add_vertex(p)
 
 
 static func _cached_cylinder_mesh(

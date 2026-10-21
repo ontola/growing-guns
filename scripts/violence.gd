@@ -710,7 +710,7 @@ static func hit_corpse(rb: RigidBody3D, hit_pos: Vector3, dir: Vector3, dmg: flo
 	# from any angle.
 	spawn_blood(scene, hit_pos, dir, 0.7)
 	var splash_dir: Vector3 = dir.normalized() if dir.length_squared() > 0.001 else Vector3.UP
-	_gib_spawn_blood_splat(scene, hit_pos, -splash_dir, splash_dir, 0.5)
+	_splat_behind_wound(scene, hit_pos, splash_dir, 0.5)
 	# Push the body slightly so heavy rounds visibly shove the corpse —
 	# positioned at the wound so it tumbles rather than translating.
 	rb.apply_impulse(splash_dir * clampf(dmg * 0.05, 0.5, 4.0), hit_pos - rb.global_position)
@@ -953,7 +953,7 @@ static func hit_corpse_any(body: Node, hit_pos: Vector3, dir: Vector3, dmg: floa
 		return
 	spawn_blood(scene, hit_pos, dir, 0.7)
 	var splash_dir: Vector3 = dir.normalized() if dir.length_squared() > 0.001 else Vector3.UP
-	_gib_spawn_blood_splat(scene, hit_pos, -splash_dir, splash_dir, 0.5)
+	_splat_behind_wound(scene, hit_pos, splash_dir, 0.5)
 	# Positioned impulse at the bullet hole so the limb twists around the
 	# hit instead of the whole bone translating.
 	pb.apply_impulse(splash_dir * clampf(dmg * 0.05, 0.5, 4.0), hit_pos - pb.global_position)
@@ -1023,9 +1023,35 @@ static func _gib_on_chunk_body_entered(rb: RigidBody3D, scene: Node, strength: f
 	var q := PhysicsRayQueryParameters3D.create(start, finish)
 	q.collision_mask = 1
 	var hit := rb.get_world_3d().direct_space_state.intersect_ray(q)
-	if hit.is_empty():
+	if not _is_stain_surface(hit):
 		return
 	_gib_spawn_blood_splat(scene, hit.position, hit.normal, dir, strength)
+
+## A stain only goes where it can stay: on the static world. Stains are
+## loose world nodes, so one painted on a corpse, a gib or flying debris
+## hung in the air once that body moved on (Joep, 2026-10-21).
+static func _is_stain_surface(hit: Dictionary) -> bool:
+	if hit.is_empty():
+		return false
+	var c: Object = hit.get("collider")
+	return c != null and not (c is RigidBody3D or c is PhysicalBone3D or c is CharacterBody3D)
+
+
+## Blood from a bullet through a corpse: it lands on the wall or floor behind
+## the wound, never on the body itself (that moves, the stain would not).
+static func _splat_behind_wound(scene: Node, hit_pos: Vector3, dir: Vector3, strength: float) -> void:
+	var world := scene.get_viewport().find_world_3d() if scene.is_inside_tree() else null
+	if world == null:
+		return
+	var space := world.direct_space_state
+	for ray: Vector3 in [dir * 2.5, Vector3.DOWN * 2.5]:
+		var q := PhysicsRayQueryParameters3D.create(hit_pos, hit_pos + ray)
+		q.collision_mask = 1
+		var hit := space.intersect_ray(q)
+		if _is_stain_surface(hit):
+			_gib_spawn_blood_splat(scene, hit.position, hit.normal, dir, strength)
+			return
+
 
 static func _gib_spawn_blood_splat(
 	scene: Node,
@@ -4253,7 +4279,7 @@ static func spawn_overkill_blood_splats(scene: Node, pos: Vector3, dir: Vector3,
 			var q := PhysicsRayQueryParameters3D.create(origin, origin + axis * radius)
 			q.collision_mask = 1
 			var hit := space.intersect_ray(q)
-			if hit.is_empty():
+			if not _is_stain_surface(hit):
 				continue
 			var hit_strength := pass_strength * (1.28 if axis == Vector3.DOWN else 1.0)
 			_gib_spawn_blood_splat(scene, hit.position, hit.normal, dir_n, hit_strength)
@@ -4269,7 +4295,7 @@ static func spawn_overkill_blood_splats(scene: Node, pos: Vector3, dir: Vector3,
 		var qf := PhysicsRayQueryParameters3D.create(origin, origin + Vector3.DOWN * radius)
 		qf.collision_mask = 1
 		var floor_hit := space.intersect_ray(qf)
-		if floor_hit.is_empty():
+		if not _is_stain_surface(floor_hit):
 			continue
 		_gib_spawn_blood_splat(
 			scene,
@@ -4291,7 +4317,7 @@ static func spawn_overkill_blood_splats(scene: Node, pos: Vector3, dir: Vector3,
 		var q2 := PhysicsRayQueryParameters3D.create(pos, pos + ray_dir * radius)
 		q2.collision_mask = 1
 		var hit2 := space.intersect_ray(q2)
-		if hit2.is_empty():
+		if not _is_stain_surface(hit2):
 			continue
 		_gib_spawn_blood_splat(
 			scene,
