@@ -404,11 +404,19 @@ func _play_stream(stream: AudioStream, volume_db: float = -6.0, at: Vector3 = NO
 		p.stream = stream
 		p.volume_db = volume_db
 		p.pitch_scale = pitch_scale
-		# 2D already plays equally left and right: the middle on stereo. With
-		# a centre speaker, put it there. (Only then: on stereo output Godot
-		# has no centre channel and a centre-targeted sound is silent.)
-		if center and AudioServer.get_speaker_mode() != AudioServer.SPEAKER_MODE_STEREO:
-			p.mix_target = AudioStreamPlayer.MIX_TARGET_CENTER
+		# 2D plays equally left and right: dead centre on any setup. A
+		# receiver's upmixer (DTS:X, Dolby Surround) steers that to the centre
+		# speaker by itself. MIX_TARGET_CENTER is not the way: Godot mixes a
+		# stereo stream into its centre/LFE pair, left into the centre and
+		# right into the sub, and on Joep's DTS:X setup that left his own
+		# shots nearly silent (2026-10-21).
+		# `center` sounds were 3D at the muzzle, about a metre away, before
+		# they moved here; give them the level that had (inverse distance at
+		# 1 m, capped like _configure_3d_player). Played flat they came out
+		# ~16 dB quieter, the other half of "I can't hear my shots".
+		if center:
+			var unit: float = attenuation_dist if attenuation_dist > 0.0 else unit_size
+			p.volume_db = minf(volume_db + 20.0 * log(unit) / log(10.0), 18.0)
 		add_child(p)
 		p.play()
 		var life_2d: float = stream.get_length() / maxf(0.1, pitch_scale) + 0.15

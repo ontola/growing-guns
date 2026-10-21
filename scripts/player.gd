@@ -470,14 +470,6 @@ func _setup_third_person_gun() -> void:
 		if gun_root == null:
 			_third_person_procedural_gun.queue_free()
 			_third_person_procedural_gun = null
-		else:
-			# Growth shares the gun's mount offset so the flesh hugs the rifle.
-			_third_person_demon_growth = DemonGrowth.new()
-			_third_person_demon_growth.name = "DemonGrowth"
-			_third_person_demon_growth.gun_path = NodePath("../ThirdPersonProceduralGun")
-			_third_person_demon_growth.position = _third_person_procedural_gun.position
-			_third_person_demon_growth.rotation = _third_person_procedural_gun.rotation
-			gun_root.add_child(_third_person_demon_growth)
 	elif hand_anchor and (character_visual == null or not character_visual.enabled):
 		var gun := MeshInstance3D.new()
 		var body_mesh := BoxMesh.new()
@@ -4786,11 +4778,9 @@ func _setup_gun_visuals() -> void:
 	_procedural_gun = preload("res://scripts/procedural_gun.gd").new()
 	_procedural_gun.name = "ProceduralGun"
 	muzzle.add_child(_procedural_gun)
-	_demon_growth = DemonGrowth.new()
-	_demon_growth.name = "DemonGrowth"
-	_demon_growth.gun_path = NodePath("../ProceduralGun")
-	_demon_growth.corruption = 0.0
-	muzzle.add_child(_demon_growth)
+	# No flesh growth on the guns any more: Joep found it too distracting and
+	# too extreme (2026-10-21). The _demon_growth fields stay null, and every
+	# use of them is guarded.
 
 func _update_gun_visuals() -> void:
 	# Push the current weapon stats into the procedural gun. All

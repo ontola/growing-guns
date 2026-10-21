@@ -184,6 +184,8 @@ var pending_pick_deadlines: Dictionary = {}
 var completed_picks: Dictionary = {}
 var eliminated_players: Dictionary = {}
 var round_winner_id: int = 0
+## True from the moment a versus round is decided until the next one starts.
+var _round_ending := false
 var _round_music_level: int = 1
 var _round_damage_seen: bool = false
 var _round_elapsed: float = 0.0
@@ -1018,6 +1020,7 @@ func _request_spawn(pname: String) -> void:
 		pending_pick_deadlines.clear()
 		completed_picks.clear()
 		eliminated_players.clear()
+		_round_ending = false
 		_restart_match()
 	else:
 		if state != State.WAITING:
@@ -2847,6 +2850,7 @@ func _reset_round_tracking() -> void:
 	completed_picks.clear()
 	_clear_coop_downed_players()
 	eliminated_players.clear()
+	_round_ending = false
 	round_winner_id = 0
 	_round_elapsed = 0.0
 	_lava_leak_started = false
@@ -3238,6 +3242,13 @@ func report_kill(killer_id: int, victim_id: int) -> void:
 			_end_coop_wave()
 		return
 
+	# Already ending (two players died in the same moment, a trade): this
+	# death is recorded above, so the victim gets a card in _end_round, but
+	# it must not end the round a second time. It used to: a second round
+	# win, a second card-pick pass and two overlapping round starts, which
+	# left one player playing and the other on a black screen.
+	if _round_ending:
+		return
 	var alive := _alive_player_ids()
 	if alive.size() <= 1:
 		var winner_id := int(alive[0]) if alive.size() == 1 else _fallback_round_winner(victim_id)
@@ -3279,6 +3290,11 @@ func _fallback_round_winner(victim_id: int) -> int:
 	return 0
 
 func _end_round(winner_id: int) -> void:
+	if _round_ending:
+		return
+	# Stays set through the banner delay below (state is still PLAYING then)
+	# until the next round's _reset_round_tracking.
+	_round_ending = true
 	round_winner_id = winner_id
 	_round_damage_seen = false
 	# Don't change music energy here — the track stays at whatever intensity
@@ -3314,6 +3330,9 @@ func _end_round(winner_id: int) -> void:
 	# let the card UI arrive while the death/blood effect is still playing.
 	if winner_id != 0:
 		await get_tree().create_timer(ROUND_WIN_TO_CARD_PICK_DELAY).timeout
+		# A new match (or round) began during the banner: nothing to pick.
+		if not _round_ending:
+			return
 	# Freeze the losers and wait for them to finish their picks.
 	_set_game_state.rpc(State.PICKING_CARD)
 	# Don't freeze losers during card pick — let everyone keep moving while
@@ -5454,6 +5473,7 @@ func _pause_start_splitscreen() -> void:
 	pending_pick_deadlines.clear()
 	completed_picks.clear()
 	eliminated_players.clear()
+	_round_ending = false
 	round_winner_id = 0
 	state = State.WAITING
 	_hide_card_pick.rpc()

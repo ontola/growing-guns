@@ -14,6 +14,7 @@ extends Node3D
 @export var receiver_color: Color = Color(0.13, 0.14, 0.17) : set = _set_receiver_color
 @export var receiver_metallic: float = 0.85 : set = _set_receiver_metallic
 @export var receiver_roughness: float = 0.32 : set = _set_receiver_roughness
+@export var furniture_color: Color = Color(0.3, 0.25, 0.18) : set = _set_furniture_color
 
 @export_group("Barrel")
 @export var barrel_count: int = 1 : set = _set_barrel_count
@@ -128,6 +129,7 @@ func _set_receiver_size(v: Vector3) -> void:        receiver_size = v;        _r
 func _set_receiver_color(v: Color) -> void:         receiver_color = v;       _rebuild()
 func _set_receiver_metallic(v: float) -> void:      receiver_metallic = v;    _rebuild()
 func _set_receiver_roughness(v: float) -> void:     receiver_roughness = v;   _rebuild()
+func _set_furniture_color(v: Color) -> void:        furniture_color = v;      _rebuild()
 func _set_barrel_count(v: int) -> void:             barrel_count = max(1, v); _rebuild()
 func _set_barrel_length(v: float) -> void:          barrel_length = v;        _rebuild()
 func _set_barrel_radius(v: float) -> void:          barrel_radius = v;        _rebuild()
@@ -460,10 +462,8 @@ func _update_heat_visual() -> void:
 	# roughly tracking how heated iron actually looks.
 	var glow_t: float = clampf(smoothstep(heat_glow_threshold, 1.0, heat), 0.0, 1.0)
 	if glow_t <= 0.0:
-		_barrel_material.emission_enabled = false
 		_barrel_material.emission_energy_multiplier = 0.0
 		if _receiver_material:
-			_receiver_material.emission_enabled = false
 			_receiver_material.emission_energy_multiplier = 0.0
 		if _heat_light:
 			_heat_light.visible = false
@@ -473,14 +473,12 @@ func _update_heat_visual() -> void:
 	var b: float = lerpf(0.0, 0.3, pow(glow_t, 3.0))
 	var emission := Color(r, g, b)
 	var barrel_energy: float = lerpf(0.0, heat_max_emission_energy, glow_t)
-	_barrel_material.emission_enabled = true
 	_barrel_material.emission = emission
 	_barrel_material.emission_energy_multiplier = barrel_energy
 	# Receiver heats up too (it's bolted to the barrel) but only partially —
 	# the chamber/breech area is hot while the grip end stays cool. Mid-body
 	# emissive at 40% sells the conduction without overpowering the barrel.
 	if _receiver_material:
-		_receiver_material.emission_enabled = true
 		_receiver_material.emission = emission
 		_receiver_material.emission_energy_multiplier = barrel_energy * RECEIVER_HEAT_FRACTION
 	if _heat_light:
@@ -652,9 +650,18 @@ func _rebuild_impl() -> void:
 
 	var metal := _make_material(receiver_color, receiver_metallic, receiver_roughness)
 	var darker_metal := _make_material(receiver_color * 0.6, 0.95, 0.22)
+	# Grips, stock, handguard and magazine: matte polymer in a warm tan, so
+	# the gun reads as two-tone instead of one dark lump.
+	var polymer := _make_polymer(furniture_color)
 	# Barrels + muzzles get their own material so heat-driven emission
 	# doesn't bleed onto the stock / sights that share darker_metal.
 	_barrel_material = _make_material(receiver_color * 0.6, 0.95, 0.22)
+	# Heat glow only changes the energy; emission stays enabled from the
+	# start, so the first hot barrel doesn't compile a new shader variant.
+	_barrel_material.emission_enabled = true
+	_barrel_material.emission_energy_multiplier = 0.0
+	metal.emission_enabled = true
+	metal.emission_energy_multiplier = 0.0
 	# Receiver tracks barrel heat at a reduced fraction (see _update_heat_visual).
 	# `metal` is only used by the Receiver mesh, so we can mutate it freely.
 	_receiver_material = metal
@@ -677,6 +684,16 @@ func _rebuild_impl() -> void:
 
 	# Receiver body
 	_add_box("Receiver", effective_receiver_size, Vector3.ZERO, metal)
+	# Break up the receiver box: a darker anodised lower receiver, an
+	# ejection port on the right, and two machined grooves along each side.
+	var rs := effective_receiver_size
+	var recess := _make_material(receiver_color * 0.2, 0.3, 0.8)
+	_add_box("LowerReceiver", Vector3(rs.x * 1.04, rs.y * 0.34, rs.z * 0.92), Vector3(0, -rs.y * 0.34, rs.z * 0.02), darker_metal)
+	_add_box("EjectionPort", Vector3(0.004, rs.y * 0.26, rs.z * 0.3), Vector3(rs.x * 0.5 + 0.001, rs.y * 0.14, -rs.z * 0.12), recess)
+	for side: float in [-1.0, 1.0]:
+		for k in 2:
+			_add_box("Groove%d%s" % [k, "L" if side < 0.0 else "R"], Vector3(0.003, 0.004, rs.z * 0.8),
+				Vector3(side * (rs.x * 0.5 + 0.0005), rs.y * (0.36 - k * 0.1), 0.0), recess)
 
 
 	# Charging handle (bolt) — a horizontal knob sticking out perpendicular
@@ -779,9 +796,13 @@ func _rebuild_impl() -> void:
 		_finalize_owner(drum)
 	else:
 		var mag_y: float = -effective_receiver_size.y * 0.5 - mag_size.y * 0.5
-		var mag := _add_box("Magazine", mag_size, Vector3(0, mag_y, mag_offset_z), darker_metal)
+		var mag := _add_box("Magazine", mag_size, Vector3(0, mag_y, mag_offset_z), polymer)
 		mag.rotation = Vector3(deg_to_rad(mag_tilt_deg), 0, 0)
 		mag.position = Vector3(0, mag_y, mag_offset_z)
+		# Grip ribs across the magazine.
+		for k in 3:
+			_add_box("MagRib%d" % k, Vector3(mag_size.x * 1.06, 0.006, mag_size.z * 1.06),
+				Vector3(0, mag_size.y * (0.2 - k * 0.18), 0), darker_metal, mag)
 
 	# Handguard + foregrip (only when the gun bracing is "on" — full-auto)
 	if has_foregrip:
@@ -789,16 +810,16 @@ func _rebuild_impl() -> void:
 		var hg_z: float = (receiver_front_z + foregrip_z) * 0.5
 		var hg_length: float = receiver_front_z - foregrip_z
 		var hg_y: float = -barrel_radius - handguard_height * 0.5
-		_add_box("Handguard", Vector3(barrel_radius * 2.4, handguard_height, hg_length), Vector3(0, hg_y, hg_z), darker_metal)
+		_add_box("Handguard", Vector3(barrel_radius * 2.4, handguard_height, hg_length), Vector3(0, hg_y, hg_z), polymer)
 
 		var foregrip_y: float = hg_y - handguard_height * 0.5 - foregrip_length * 0.5
-		var grip := _add_cylinder("Foregrip", foregrip_radius, foregrip_radius * 0.85, foregrip_length, Vector3(0, foregrip_y, foregrip_z), darker_metal)
+		var grip := _add_cylinder("Foregrip", foregrip_radius, foregrip_radius * 0.85, foregrip_length, Vector3(0, foregrip_y, foregrip_z), polymer)
 		grip.rotation = Vector3(deg_to_rad(-8.0), 0, 0)
 
 	# Pistol grip — angled cylinder at back-bottom of the receiver
 	var pgrip_z: float = effective_receiver_size.z * 0.32
 	var pgrip_y: float = -effective_receiver_size.y * 0.5 - pistol_grip_length * 0.5
-	var pgrip := _add_cylinder("PistolGrip", pistol_grip_radius, pistol_grip_radius * 1.05, pistol_grip_length, Vector3(0, pgrip_y, pgrip_z), darker_metal)
+	var pgrip := _add_cylinder("PistolGrip", pistol_grip_radius, pistol_grip_radius * 1.05, pistol_grip_length, Vector3(0, pgrip_y, pgrip_z), polymer)
 	# Tilt grip backwards (toward shooter) for ergonomic feel
 	pgrip.rotation = Vector3(deg_to_rad(pistol_grip_tilt_deg), 0, 0)
 
@@ -820,8 +841,8 @@ func _rebuild_impl() -> void:
 		var back_z: float = effective_receiver_size.z * 0.5 + half_z * 1.5   # rear half of total depth
 		var front_z: float = effective_receiver_size.z * 0.5 + half_z * 0.5  # front half (closer to receiver)
 		stock_rear_z = back_z + half_z
-		_add_box("StockBack", Vector3(stock_size.x, back_h, half_z), Vector3(0, bottom_y + back_h * 0.5, back_z), darker_metal)
-		_add_box("StockFront", Vector3(stock_size.x * 0.95, front_h, half_z), Vector3(0, bottom_y + front_h * 0.5, front_z), darker_metal)
+		_add_box("StockBack", Vector3(stock_size.x, back_h, half_z), Vector3(0, bottom_y + back_h * 0.5, back_z), polymer)
+		_add_box("StockFront", Vector3(stock_size.x * 0.95, front_h, half_z), Vector3(0, bottom_y + front_h * 0.5, front_z), polymer)
 
 	# Plain launcher tube off the receiver rear — replaces the rifle stock.
 	# Diameter matches receiver height so the tube reads as the same body.
@@ -1032,13 +1053,30 @@ static func _cached_cylinder_mesh(
 	return m
 
 
+## Machined metal: real metallic/roughness (the old flat toon shading threw
+## both away). Metal albedo is its reflection colour, so near-black steel
+## reads as a hole; lift it to gunmetal. A touch of rim keeps the edges.
 func _make_material(col: Color, metallic: float, roughness: float) -> StandardMaterial3D:
 	var m := StandardMaterial3D.new()
-	m.albedo_color = col.lightened(0.06)
+	var lift := lerpf(0.06, 0.3, clampf(metallic, 0.0, 1.0))
+	m.albedo_color = col.lerp(Color(0.62, 0.64, 0.68), lift)
+	m.metallic = clampf(metallic, 0.0, 1.0)
+	m.roughness = clampf(roughness + 0.1, 0.0, 1.0)
+	m.rim_enabled = true
+	m.rim = 0.2
+	m.rim_tint = 0.6
+	return m
+
+
+## Matte polymer for grips, stock, handguard and magazine.
+func _make_polymer(col: Color) -> StandardMaterial3D:
+	var m := StandardMaterial3D.new()
+	m.albedo_color = col
 	m.metallic = 0.0
-	m.roughness = 1.0
-	m.diffuse_mode = BaseMaterial3D.DIFFUSE_TOON
-	m.specular_mode = BaseMaterial3D.SPECULAR_DISABLED
+	m.roughness = 0.7
+	m.rim_enabled = true
+	m.rim = 0.15
+	m.rim_tint = 0.5
 	return m
 
 func _add_box(part_name: String, size: Vector3, pos: Vector3, mat: Material, parent: Node3D = null) -> MeshInstance3D:
