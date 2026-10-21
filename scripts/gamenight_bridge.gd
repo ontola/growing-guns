@@ -79,6 +79,7 @@ func _ready() -> void:
 	GameNight.paused.connect(_on_paused)
 	GameNight.resumed.connect(_on_resumed)
 	GameNight.disposed.connect(_on_disposed)
+	GameNight.players_updated.connect(func(_players: Array) -> void: _apply_party_identities())
 
 
 ## ── Session lifecycle ──────────────────────────────────────────────────────
@@ -228,6 +229,40 @@ func _bind_gamenight_seats() -> void:
 		game._spawn_bots(unseated)
 
 
+## Give each seated person their GameNight name and colour. Runs at `start`
+## and again on `players_updated`, when someone picks up another profile in
+## the lobby: the match keeps going, only the names and colours change.
+func _apply_party_identities() -> void:
+	var game := get_tree().current_scene
+	if game == null or game.get("players_root") == null:
+		return
+	var by_id := {}
+	for player in GameNight.party.get("players", []):
+		if typeof(player) == TYPE_DICTIONARY:
+			by_id[str(player.get("id", ""))] = player
+	var splitscreen: Node = game.get("_splitscreen")
+	var changed := false
+	for device in seat_pads.devices():
+		var player: Dictionary = by_id.get(seat_pads.profile_for_device(int(device)), {})
+		var pname := str(player.get("name", ""))
+		if pname.is_empty():
+			continue
+		var id := multiplayer.get_unique_id()
+		if _local_seat_count >= 2 and splitscreen and splitscreen.has_method("_player_for_device"):
+			id = int(splitscreen._player_for_device(int(device)))
+		if id == 0:
+			continue
+		var color_text := str(player.get("color", ""))
+		var color := Color.from_string(color_text, Color.TRANSPARENT) if not color_text.is_empty() else Color.TRANSPARENT
+		NetworkManager.players[id] = pname
+		var node: Node = game.players_root.get_node_or_null(str(id))
+		if node and node.has_method("set_party_identity"):
+			node.set_party_identity(pname, color)
+		changed = true
+	if changed and game.has_method("_update_scoreboard"):
+		game._update_scoreboard()
+
+
 ## One seated human, so no splitscreen — but still a controller player. The
 ## party is on the couch and the game is on the TV; nobody is at the keyboard.
 ##
@@ -260,6 +295,7 @@ func _on_started(session_id: String) -> void:
 	# see, so seating everybody after opening the gate means the match starts
 	# a player short.
 	_bind_gamenight_seats()
+	_apply_party_identities()
 	var game := get_tree().current_scene
 	# Warming happened in a minimised window, which never drew the effect
 	# warmup: compile those pipelines now, on the first visible frames and

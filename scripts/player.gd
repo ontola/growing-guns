@@ -412,6 +412,17 @@ func set_display_name(new_name: String) -> void:
 		name_label.text = new_name
 
 
+## GameNight renamed or recoloured this seat mid-match (another profile picked
+## up in the lobby): show it at once, without respawning anyone.
+func set_party_identity(new_name: String, color: Color) -> void:
+	set_display_name(new_name)
+	party_color = color
+	if character_visual and character_visual.is_active():
+		character_visual.set_identity_color(identity_color())
+	if name_label:
+		name_label.outline_modulate = identity_color().darkened(0.45)
+
+
 func _ready() -> void:
 	name_label.text = player_name
 	_muzzle_rest_pos = muzzle.position
@@ -696,7 +707,13 @@ const IDENTITY_COLORS: Array[Color] = [
 
 ## This player's colour: the same on every peer, because it comes from the
 ## shared roster order rather than anything local.
+## The colour the party gave this person in GameNight, when they sit on a
+## GameNight seat. Transparent means none: the game picks one below.
+var party_color := Color.TRANSPARENT
+
 func identity_color() -> Color:
+	if party_color.a > 0.0:
+		return party_color
 	var game := get_tree().current_scene if is_inside_tree() else null
 	if is_bot and game and game.has_method("is_coop_mode") and game.is_coop_mode():
 		return _coop_identity_color(_identity_seed())

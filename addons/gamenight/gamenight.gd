@@ -32,10 +32,21 @@ signal daemon_disconnected
 signal party_updated(party: Dictionary)
 signal controllers_changed(controllers: Array)
 signal roster_changed(seats: Array, players: Array, presence: Array)
+## The same players changed name, colour, face or profile_key (someone picked
+## up a profile in the lobby). Update labels, colours and saves in place; the
+## match keeps going, so never restart over it. `players` holds every player
+## the session was prepared with; `party.players` is already updated.
+signal players_updated(players: Array)
 ## The party changed one of the settings you declared with
 ## declare_settings(). Apply it live when safe, or at the next round boundary.
 ## State that timing in the label. `value` is a bool, int or String.
 signal setting_changed(key: String, value: Variant)
+## One player's own values for your per-player settings (declared with
+## "scope": "player"), e.g. their character or stick sensitivity. `values` maps
+## every such key to its value (defaults merged in). Arrives after
+## declare_settings(), with every prepare and roster update, and whenever that
+## player changes one. Saved with their profile between nights.
+signal player_settings_changed(player_id: String, values: Dictionary)
 
 const PROTOCOL := preload("protocol.gd")
 const PROTOCOL_VERSION := PROTOCOL.PROTOCOL_VERSION
@@ -226,6 +237,9 @@ func report_activity(seat_index: int) -> void:
 ##     "default": "meadow", "options": ["meadow", "volcano"] }
 ## Changes arrive via [signal setting_changed]; values the party already
 ## picked survive reconnects and are replayed right after declaring.
+## Add "scope": "player" for a value every player chooses for themselves
+## (their character, their stick sensitivity); those arrive via
+## [signal player_settings_changed] and [method player_setting].
 func declare_settings(settings: Array) -> void:
 	_declared_settings = settings
 	_send({"type": PROTOCOL.MSG_DECLARE_SETTINGS, "settings": settings})
@@ -237,6 +251,17 @@ var _declared_settings: Array = []
 ## validates it and answers with [signal setting_changed], like any other write.
 func set_setting(key: String, value: Variant) -> void:
 	_send({"type": PROTOCOL.MSG_SET_SETTING, "key": key, "value": value})
+
+## Change one player's own value of a per-player setting, for example from your
+## character select. Answered with [signal player_settings_changed].
+func set_player_setting(player_id: String, key: String, value: Variant) -> void:
+	_send({"type": PROTOCOL.MSG_SET_PLAYER_SETTING, "player_id": player_id, "key": key, "value": value})
+
+## The last known value of a player's own setting, or `fallback`.
+func player_setting(player_id: String, key: String, fallback: Variant = null) -> Variant:
+	return _player_settings.get(player_id, {}).get(key, fallback)
+
+var _player_settings: Dictionary = {}
 
 ## Optional: give each player a screen of their own on their phone (see
 ## "Phone screens" in docs/protocol.md). `root` is an absolute directory the
@@ -513,7 +538,7 @@ func _handle(msg: Variant) -> void:
 	if typeof(msg) != TYPE_DICTIONARY:
 		return
 	var kind: String = msg.get("type", "")
-	if kind in [PROTOCOL.MSG_START, PROTOCOL.MSG_PAUSE, PROTOCOL.MSG_RESUME, PROTOCOL.MSG_DISPOSE, PROTOCOL.MSG_PARTY_UPDATED] and (session.is_empty() or msg.get("session","") != session): return
+	if kind in [PROTOCOL.MSG_START, PROTOCOL.MSG_PAUSE, PROTOCOL.MSG_RESUME, PROTOCOL.MSG_DISPOSE, PROTOCOL.MSG_PARTY_UPDATED, PROTOCOL.MSG_PLAYERS_UPDATED] and (session.is_empty() or msg.get("session","") != session): return
 	match kind:
 		PROTOCOL.MSG_WELCOME:
 			if int(msg.get("godot_sdk", 0)) > SDK_VERSION:
@@ -540,6 +565,18 @@ func _handle(msg: Variant) -> void:
 		PROTOCOL.MSG_PARTY_UPDATED:
 			for key in ["seats","players","presence"]: party[key] = msg.get(key,[])
 			roster_changed.emit(party.seats,party.players,party.presence)
+			party_updated.emit(party)
+		PROTOCOL.MSG_PLAYERS_UPDATED:
+			var updated: Array = msg.get("players", [])
+			var players: Array = party.get("players", [])
+			for player in updated:
+				var known := -1
+				for i in players.size():
+					if players[i].get("id") == player.get("id"): known = i
+				if known >= 0: players[known] = player
+				else: players.append(player)
+			party["players"] = players
+			players_updated.emit(updated)
 			party_updated.emit(party)
 		PROTOCOL.MSG_PREPARE:
 			if msg.get("game", game_id) != game_id or msg.get("session", "").is_empty() or msg.get("session", "") == session: return
@@ -581,6 +618,16 @@ func _handle(msg: Variant) -> void:
 				# JSON numbers parse as float; number settings are integers.
 				value = int(value)
 			setting_changed.emit(msg.get("key", ""), value)
+		PROTOCOL.MSG_PLAYER_SETTINGS:
+			var player_id := str(msg.get("player_id", ""))
+			var values := {}
+			var raw: Variant = msg.get("values", {})
+			if raw is Dictionary:
+				for key in raw:
+					var value: Variant = raw[key]
+					values[key] = int(value) if value is float else value
+			_player_settings[player_id] = values
+			player_settings_changed.emit(player_id, values)
 		PROTOCOL.MSG_COMPANION_MESSAGE:
 			companion_message.emit(str(msg.get("player_id", "")), msg.get("data"))
 		PROTOCOL.MSG_COMPANION_PRESENCE:

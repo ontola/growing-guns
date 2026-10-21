@@ -22,7 +22,7 @@ const ENV_OVERLAY_URL := "GAMENIGHT_OVERLAY_URL"
 const ENV_TOKEN := "GAMENIGHT_TOKEN"
 const DEFAULT_ADDR := "127.0.0.1:7912"
 const DEFAULT_WEB_PORT := 7913
-const GODOT_SDK_VERSION := 2
+const GODOT_SDK_VERSION := 4
 const PROTOCOL_VERSION := 1
 
 ## Message "type" tags, both directions.
@@ -57,6 +57,8 @@ const MSG_PARTY_UPDATED := "party_updated"
 const MSG_PAUSE := "pause"
 const MSG_PERFORMANCE := "performance"
 const MSG_PLAY_NEXT := "play_next"
+const MSG_PLAYER_SETTINGS := "player_settings"
+const MSG_PLAYERS_UPDATED := "players_updated"
 const MSG_PLAYTESTS := "playtests"
 const MSG_PREPARE := "prepare"
 const MSG_PROGRESS := "progress"
@@ -73,6 +75,8 @@ const MSG_RETRY_LOBBY := "retry_lobby"
 const MSG_SET_PHONES := "set_phones"
 const MSG_SET_PLAYER_AVATAR := "set_player_avatar"
 const MSG_SET_PLAYER_COLOR := "set_player_color"
+const MSG_SET_PLAYER_PROFILE := "set_player_profile"
+const MSG_SET_PLAYER_SETTING := "set_player_setting"
 const MSG_SET_PLAYER_SKIN_COLOR := "set_player_skin_color"
 const MSG_SET_PLAYLIST := "set_playlist"
 const MSG_SET_SETTING := "set_setting"
@@ -140,6 +144,10 @@ const SESSION_PHASE_DISPOSED := "disposed"
 const SETTING_KIND_TOGGLE := "toggle"
 const SETTING_KIND_NUMBER := "number"
 const SETTING_KIND_CHOICE := "choice"
+
+## SettingScope
+const SETTING_SCOPE_PARTY := "party"
+const SETTING_SCOPE_PLAYER := "player"
 
 ## SettingSpec
 const SETTING_SPEC_TOGGLE := "toggle"

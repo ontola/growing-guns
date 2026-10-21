@@ -68,6 +68,13 @@ func bind(seats: Array) -> Array:
 	return devices
 
 
+## The virtual pads bound to seats, in seat order.
+func devices() -> Array:
+	var out := _seats.keys()
+	out.sort()
+	return out
+
+
 func is_seat_device(device: int) -> bool:
 	return _seats.has(device)
 
