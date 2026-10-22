@@ -2487,7 +2487,13 @@ func _rifle_fired(
 	if shooter_node and shooter_node.has_method("_consume_shot_fx_budget"):
 		spawn_shot_fx = bool(shooter_node.call("_consume_shot_fx_budget"))
 	if spawn_shot_fx and not (BenchFlags.active and BenchFlags.no_shot_audio):
-		SFX.shot(w, origin, is_self, silenced, last_in_mag)
+		# In splitscreen your own bang comes from your half of the screen.
+		var pan := 0.0
+		var game_scene_s: Node = get_tree().current_scene
+		var ss: Node = game_scene_s.get("_splitscreen") if game_scene_s else null
+		if is_self and ss and ss.has_method("audio_side_for"):
+			pan = clampf(float(ss.audio_side_for(shooter_id)) * 1.6, -0.8, 0.8)
+		SFX.shot(w, origin, is_self, silenced, last_in_mag, pan)
 	if is_self and shooter_node and shooter_node.has_method("rumble"):
 		# A light kick per shot, heavier for the big guns.
 		var heft: float = clampf(w.get_damage_for_shot(last_in_mag) / Weapon.BASE_DAMAGE / 4.0, 0.0, 1.0)

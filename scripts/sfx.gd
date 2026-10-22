@@ -386,7 +386,7 @@ func _solo_blocks(label: String) -> bool:
 # filter, no reverb). Use for sharp transients that should hit clean.
 # `priority_db_spl`: real-world SPL approximation for HDR gating. See
 # _hdr_blocks() — sounds below `max_spl - HDR_WINDOW_DB` are culled.
-func _play_stream(stream: AudioStream, volume_db: float = -6.0, at: Vector3 = NO_POS, pitch_scale: float = 1.0, debug_label: String = "", attenuation_dist: float = -1.0, dry: bool = false, priority_db_spl: float = 80.0, big_tail: bool = true, center: bool = false) -> Node:
+func _play_stream(stream: AudioStream, volume_db: float = -6.0, at: Vector3 = NO_POS, pitch_scale: float = 1.0, debug_label: String = "", attenuation_dist: float = -1.0, dry: bool = false, priority_db_spl: float = 80.0, big_tail: bool = true, center: bool = false, pan: float = 0.0) -> Node:
 	if _solo_blocks(debug_label):
 		return null
 	if _hdr_blocks(priority_db_spl, debug_label):
@@ -419,6 +419,8 @@ func _play_stream(stream: AudioStream, volume_db: float = -6.0, at: Vector3 = NO
 		if center:
 			var unit: float = attenuation_dist if attenuation_dist > 0.0 else unit_size
 			p.volume_db = minf(volume_db + 20.0 * log(unit) / log(10.0), 18.0)
+		if not is_zero_approx(pan):
+			p.bus = _pan_bus(pan)
 		add_child(p)
 		p.play()
 		var life_2d: float = stream.get_length() / maxf(0.1, pitch_scale) + 0.15
@@ -455,6 +457,22 @@ func _play_stream(stream: AudioStream, volume_db: float = -6.0, at: Vector3 = NO
 # every player's perspective gets mixed into the single audio output. The
 # ghost positions are computed so the host-anchored listener perceives them
 # the way each secondary player would have perceived the original source.
+## A bus that pans whatever plays on it, one per (rounded) pan value, made
+## on first use and routed into Master.
+func _pan_bus(pan: float) -> StringName:
+	var p := snappedf(clampf(pan, -1.0, 1.0), 0.05)
+	var bus_name := StringName("Pan%+.2f" % p)
+	if AudioServer.get_bus_index(bus_name) < 0:
+		AudioServer.add_bus()
+		var idx := AudioServer.bus_count - 1
+		AudioServer.set_bus_name(idx, bus_name)
+		AudioServer.set_bus_send(idx, &"Master")
+		var panner := AudioEffectPanner.new()
+		panner.pan = p
+		AudioServer.add_bus_effect(idx, panner)
+	return bus_name
+
+
 func _splitscreen_ghost_positions(at: Vector3) -> Array:
 	var scene := get_tree().current_scene
 	if scene == null:
@@ -693,7 +711,9 @@ func _hitmarker_cache_key(kind: String, dmg: int) -> String:
 
 # -------------------- sounds --------------------
 
-func shot(w: Weapon = null, at: Vector3 = NO_POS, is_self: bool = false, silenced: bool = false, last_in_mag: bool = false) -> void:
+## `pan` (-1 left .. 1 right) places a local shooter's own bang on their
+## side of the speakers in splitscreen; 0 is dead centre.
+func shot(w: Weapon = null, at: Vector3 = NO_POS, is_self: bool = false, silenced: bool = false, last_in_mag: bool = false, pan: float = 0.0) -> void:
 	# Use a random real-gun sample when available; fall back to the synth.
 	# Higher-damage weapons pitch down (heavier report) AND get louder.
 	# Self-shots play 2D at their own volume so the local BANG can be tuned
@@ -718,6 +738,9 @@ func shot(w: Weapon = null, at: Vector3 = NO_POS, is_self: bool = false, silence
 	# inverse-distance. 6 m gives noticeable close/mid/far distinction in a
 	# typical arena while still carrying audibly to the far walls.
 	var shot_dist: float = 6.0
+	# Other people's shots fall off from 3 m instead: someone a couple of
+	# metres away used to be as loud as your own gun (Joep, 2026-10-22).
+	var world_shot_dist: float = 3.0
 	# Self shots play 3D at the muzzle (1 m from listener -> within unit_size,
 	# full volume) so they route through RaytracedReverb and pick up the
 	# environment tail. Pure 2D self-shots sounded thin / dry.
@@ -746,13 +769,13 @@ func shot(w: Weapon = null, at: Vector3 = NO_POS, is_self: bool = false, silence
 	var dry_at: Vector3 = NO_POS if is_self else at
 	if not _gun_sounds.is_empty():
 		var stream: AudioStream = _gun_sounds.pick_random()
-		_play_stream(stream, dry_vol, dry_at, pitch, label, shot_dist, true, spl, true, is_self)
-		_play_stream(stream, wet_vol, at, pitch, wet_label, shot_dist, false, spl)
+		_play_stream(stream, dry_vol, dry_at, pitch, label, shot_dist if is_self else world_shot_dist, true, spl, true, is_self, pan)
+		_play_stream(stream, wet_vol, at, pitch, wet_label, world_shot_dist, false, spl)
 	else:
 		var key := _shot_cache_key(w, shot_variant, last_in_mag)
 		var wav := _cached_wav(key, Callable(self, "_synth_shot").bind(w, shot_variant))
-		_play_stream(wav, dry_vol, dry_at, pitch, label, shot_dist, true, spl, true, is_self)
-		_play_stream(wav, wet_vol, at, pitch, wet_label, shot_dist, false, spl)
+		_play_stream(wav, dry_vol, dry_at, pitch, label, shot_dist if is_self else world_shot_dist, true, spl, true, is_self, pan)
+		_play_stream(wav, wet_vol, at, pitch, wet_label, world_shot_dist, false, spl)
 	# Rumble layer — only for hard-hitting weapons (>1.4× base damage). Reuses
 	# the explosion rumble synth + cache (same brown-noise body) but at a much
 	# lower dB so it sits under the bang. Snipers, bazookas, etc. get a real

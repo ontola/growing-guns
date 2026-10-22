@@ -310,6 +310,21 @@ func flash_impact_all(world_pos: Vector3, intensity: float = 1.0) -> void:
 			rp.flash_impact(world_pos, intensity)
 
 
+## Where each local player's view sits across the screen, -1 (far left) to
+## 1 (far right): their sounds are pushed to that side of the speakers.
+var _audio_side_by_player: Dictionary = {}
+## How far (m) a view at the screen edge moves its sounds sideways. Near
+## sounds swing almost fully to that side, distant ones only a little.
+const AUDIO_SIDE_SPREAD := 5.0
+
+
+## The speaker side for this player's own sounds, 0 when not split.
+func audio_side_for(player_id: int) -> float:
+	if not _enabled:
+		return 0.0
+	return float(_audio_side_by_player.get(player_id, 0.0))
+
+
 func update_views() -> void:
 	if not _grid:
 		return
@@ -328,6 +343,7 @@ func update_views() -> void:
 		var id := ids[i]
 		var renderer := _renderers_by_player[id] as RenderPlayer
 		var slot := _slot_rect(i, n, rect.size)
+		_audio_side_by_player[id] = (slot.get_center().x / maxf(1.0, rect.size.x)) * 2.0 - 1.0 if n > 1 else 0.0
 		renderer.position = slot.position
 		renderer.size = slot.size
 		renderer.layout_for_size(slot.size)
@@ -360,9 +376,14 @@ func _update_audio_listener() -> void:
 	var cam := _host_primary_camera()
 	if cam == null:
 		return
-	_audio_listener.global_transform = cam.global_transform
+	# Each view's sounds come from its own side of the room: the listener
+	# steps away from the host's side, so the host's world lands on their
+	# half, and ghost_positions_for shifts the other views toward theirs.
+	var ear := cam.global_transform
+	ear.origin -= ear.basis.x.normalized() * audio_side_for(multiplayer.get_unique_id()) * AUDIO_SIDE_SPREAD
+	_audio_listener.global_transform = ear
 	if _audio_camera and is_instance_valid(_audio_camera):
-		_audio_camera.global_transform = cam.global_transform
+		_audio_camera.global_transform = ear
 		if not _audio_camera.current:
 			_audio_camera.make_current()
 
@@ -402,7 +423,9 @@ func ghost_positions_for(world_pos: Vector3) -> Array[Vector3]:
 			continue
 		var p_xform := p_cam.global_transform
 		var v_local: Vector3 = p_xform.basis.inverse() * (world_pos - p_xform.origin)
-		out.append(host_xform.origin + host_xform.basis * v_local)
+		# Relative to the shifted listener this lands on the viewer's own side.
+		var side := audio_side_for(id) - audio_side_for(host_id)
+		out.append(host_xform.origin + host_xform.basis * v_local + host_xform.basis.x.normalized() * side * AUDIO_SIDE_SPREAD)
 	return out
 
 
