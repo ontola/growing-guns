@@ -6,7 +6,7 @@ extends Node
 ## `GameNight.devices_for_local_seats` returns nothing. The game, though, reads
 ## a player's pad by device id everywhere (player movement and aim, the card
 ## pick, the input map). So each local seat gets a virtual device id, and every
-## physics tick its host frame is replayed into `Input` as joypad events on
+## frame its host frame is replayed into `Input` as joypad events on
 ## that id. Seated players never read the physical pads, which also means the
 ## host decides who drives whom, not the order Windows enumerated them in.
 
@@ -45,6 +45,8 @@ var _last: Dictionary = {}
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
+	# After GameNight's _process has read the socket this frame (see _process).
+	process_priority = 100
 
 
 ## A device id per local seat of `seats`, in seat order. Replaces any earlier
@@ -118,7 +120,12 @@ func release_all() -> void:
 	_last.clear()
 
 
-func _physics_process(_delta: float) -> void:
+## Replays in _process, after GameNight read this frame's packets. From
+## _physics_process, the physics steps that catch up after a long frame (the
+## pause menu's first build) ran before that read, saw the host's input as
+## stale, released a held Start and then pressed it again: the menu opened
+## and closed at once.
+func _process(_delta: float) -> void:
 	for device in _seats.keys():
 		var seat_index: int = _seats[device]
 		# Empty while paused or when the host's input is stale: neutral.

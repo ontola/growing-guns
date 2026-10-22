@@ -148,11 +148,14 @@ var solo_kind: String = ""
 
 func _ready() -> void:
 	_ensure_master_chain()
+	for pan in [-0.8, -0.4, 0.4, 0.8]:
+		_pan_bus(pan)
 	_load_assets()
 	set_process(true)
 
 func _process(delta: float) -> void:
 	var _pt := Time.get_ticks_usec() if Trace.enabled else 0
+	_bg_drain()
 	# Slide the HDR window back down toward the ambient floor at a fixed
 	# release rate. New plays push the max back up via _hdr_blocks().
 	if _hdr_max_spl > HDR_FLOOR_DB:
@@ -457,10 +460,12 @@ func _play_stream(stream: AudioStream, volume_db: float = -6.0, at: Vector3 = NO
 # every player's perspective gets mixed into the single audio output. The
 # ghost positions are computed so the host-anchored listener perceives them
 # the way each secondary player would have perceived the original source.
-## A bus that pans whatever plays on it, one per (rounded) pan value, made
-## on first use and routed into Master.
+## A bus that pans whatever plays on it, one per PAN_STEP, routed into
+## Master. _ready makes them all: adding a bus mid-match locks the mixer.
+const PAN_STEP := 0.4
+
 func _pan_bus(pan: float) -> StringName:
-	var p := snappedf(clampf(pan, -1.0, 1.0), 0.05)
+	var p := snappedf(clampf(pan, -0.8, 0.8), PAN_STEP)
 	var bus_name := StringName("Pan%+.2f" % p)
 	if AudioServer.get_bus_index(bus_name) < 0:
 		AudioServer.add_bus()
@@ -540,6 +545,7 @@ func _spawn_3d_player(stream: AudioStream, volume_db: float, at: Vector3, pitch_
 	return p
 
 func _cached_samples(key: String, generator: Callable) -> PackedVector2Array:
+	_bg_drain()
 	if not _sample_cache.has(key):
 		_sample_cache[key] = generator.call()
 	return _sample_cache[key]
@@ -549,6 +555,7 @@ func _cached_samples(key: String, generator: Callable) -> PackedVector2Array:
 # casing) call this instead of `_samples_to_wav(_cached_samples(...))` so
 # they avoid re-allocating a fresh WAV (and its byte-array data) per call.
 func _cached_wav(key: String, generator: Callable) -> AudioStreamWAV:
+	_bg_drain()
 	if not _wav_cache.has(key):
 		var samples: PackedVector2Array = _cached_samples(key, generator)
 		_wav_cache[key] = _samples_to_wav(samples)
@@ -557,8 +564,7 @@ func _cached_wav(key: String, generator: Callable) -> AudioStreamWAV:
 # Pre-cache shot + explosion samples for the given weapons / radii so first-
 # fire stutters (30-50ms of synth on the audio thread) are paid during a
 # quiet warmup window — round start or post-card-pick — instead of mid-fight.
-# Spreads the work across frames via `await get_tree().process_frame` between
-# tasks so a long warmup pass never freezes the simulation. Cache hits are
+# The synths run on a background thread (see _bg_enqueue). Cache hits are
 # instant no-ops so re-calling with overlapping inputs is cheap.
 func warmup_async(weapons: Array, radii: Array) -> void:
 	for w in weapons:
@@ -566,31 +572,30 @@ func warmup_async(weapons: Array, radii: Array) -> void:
 			continue
 		for v in SHOT_VARIANTS:
 			var key := _shot_cache_key(w, v)
-			_cached_wav(key, Callable(self, "_synth_shot").bind(w, v))
-			await get_tree().process_frame
+			_bg_wav(key, Callable(self, "_synth_shot").bind(w, v))
+		# Its reload rattle (same bucket as reload()).
+		var reload_bucket := snappedf(clampf((w as Weapon).get_reload_time(), 0.2, 6.0), 0.05)
+		_bg_samples("reload:%0.2f" % reload_bucket, Callable(self, "_synth_reload").bind(reload_bucket))
 		# Its near-miss zips too (same buckets as bullet_zip).
 		var speed_bucket := int(round(clampf((w as Weapon).get_bullet_speed() / 165.0, 0.2, 5.0) * 10.0))
 		var scale_bucket := int(round(clampf((w as Weapon).get_bullet_scale_for_shot(false), 0.5, 4.0) * 10.0))
 		for v in BULLET_ZIP_VARIANTS:
-			_cached_wav("bullet_zip:%d:%d:%d" % [speed_bucket, scale_bucket, v],
+			_bg_wav("bullet_zip:%d:%d:%d" % [speed_bucket, scale_bucket, v],
 				Callable(self, "_synth_bullet_zip").bind(float(speed_bucket) / 10.0, float(scale_bucket) / 10.0))
-			await get_tree().process_frame
 	for radius in radii:
 		var r_bucket: int = int(round(clampf(float(radius), 2.0, 24.0)))
 		for v in EXPLOSION_VARIANTS:
 			var bang_key := "explosion_bang:%d:%d" % [r_bucket, v]
-			_cached_wav(bang_key, Callable(self, "_synth_explosion").bind(float(r_bucket), v))
-			await get_tree().process_frame
+			_bg_wav(bang_key, Callable(self, "_synth_explosion").bind(float(r_bucket), v))
 			var rumble_key := "explosion_rumble:%d:%d" % [r_bucket, v]
-			_cached_wav(rumble_key, Callable(self, "_synth_explosion_rumble").bind(float(r_bucket), v))
-			await get_tree().process_frame
+			_bg_wav(rumble_key, Callable(self, "_synth_explosion_rumble").bind(float(r_bucket), v))
 
 
 # One-time warmup (called once at game boot from Game._ready) for the
 # procedurally-synthesized effect sounds that warmup_async — shots + explosions,
 # re-run each round — doesn't cover. Each first synth is otherwise a main-thread
 # hitch the first time the effect fires; the ion charge is the worst (a 3.8s
-# buffer). One synth per frame, like warmup_async, so boot doesn't spike. The
+# buffer). On the background thread, like warmup_async, so boot doesn't spike. The
 # keys/buckets mirror the live call sites — keep them in sync if those change.
 func warmup_specials() -> void:
 	if _warmup_specials_started:
@@ -604,48 +609,36 @@ func _warmup_specials_async() -> void:
 	# from BLAST_RADIUS (38) — its burst zap plus the bucket-24 explosion boom
 	# it layers on top (radius 38 clamps to the bang/rumble bucket 24, which the
 	# [4,6,8,10] per-round warmup never reaches).
-	_cached_wav("ion_cannon_charge:3.80", Callable(self, "_synth_ion_cannon_charge").bind(3.8))
-	await get_tree().process_frame
+	_bg_wav("ion_cannon_charge:3.80", Callable(self, "_synth_ion_cannon_charge").bind(3.8))
 	for v in 3:
-		_cached_wav("ion_cannon_burst:38:%d" % v, Callable(self, "_synth_ion_cannon_burst").bind(38.0, v))
-		await get_tree().process_frame
+		_bg_wav("ion_cannon_burst:38:%d" % v, Callable(self, "_synth_ion_cannon_burst").bind(38.0, v))
 	for v in EXPLOSION_VARIANTS:
-		_cached_wav("explosion_bang:24:%d" % v, Callable(self, "_synth_explosion").bind(24.0, v))
-		await get_tree().process_frame
-		_cached_wav("explosion_rumble:24:%d" % v, Callable(self, "_synth_explosion_rumble").bind(24.0, v))
-		await get_tree().process_frame
+		_bg_wav("explosion_bang:24:%d" % v, Callable(self, "_synth_explosion").bind(24.0, v))
+		_bg_wav("explosion_rumble:24:%d" % v, Callable(self, "_synth_explosion_rumble").bind(24.0, v))
 	# Standard grenade blast radius (6 m) — first RMB throw otherwise synths here.
 	for v in EXPLOSION_VARIANTS:
-		_cached_wav("explosion_bang:6:%d" % v, Callable(self, "_synth_explosion").bind(6.0, v))
-		await get_tree().process_frame
-		_cached_wav("explosion_rumble:6:%d" % v, Callable(self, "_synth_explosion_rumble").bind(6.0, v))
-		await get_tree().process_frame
+		_bg_wav("explosion_bang:6:%d" % v, Callable(self, "_synth_explosion").bind(6.0, v))
+		_bg_wav("explosion_rumble:6:%d" % v, Callable(self, "_synth_explosion_rumble").bind(6.0, v))
 	# Grenade launcher foomp + round-start rocket descent whistle.
 	for v in 5:
-		_cached_samples("grenade_launch:%d" % v, Callable(self, "_synth_grenade_launch").bind(v))
-		await get_tree().process_frame
-	_cached_samples("rocket_descent", Callable(self, "_synth_rocket_descent"))
-	await get_tree().process_frame
+		_bg_samples("grenade_launch:%d" % v, Callable(self, "_synth_grenade_launch").bind(v))
+	_bg_samples("rocket_descent", Callable(self, "_synth_rocket_descent"))
 	# Air strike inbound whistle. Bucket from AirStrike.ROCKET_TRAVEL_SECONDS
 	# (2.3 → 2.25); warm both the near and distant timbre.
 	for distant in [0, 1]:
-		_cached_wav("air_strike_inbound:2.25:%d" % distant,
+		_bg_wav("air_strike_inbound:2.25:%d" % distant,
 			Callable(self, "_synth_air_strike_inbound").bind(2.25, distant == 1))
-		await get_tree().process_frame
 	# Lava sizzle — contact + fall, 3 variants each.
 	for fall in [false, true]:
 		var mode := "fall" if fall else "contact"
 		for v in 3:
-			_cached_wav("lava_sizzle2:%s:%d" % [mode, v], Callable(self, "_synth_lava_sizzle").bind(v, fall))
-			await get_tree().process_frame
+			_bg_wav("lava_sizzle2:%s:%d" % [mode, v], Callable(self, "_synth_lava_sizzle").bind(v, fall))
 	# Brass casing pings — every shot drops one, but warm the pool so the very
 	# first casing of the match doesn't synth mid-frame either.
 	for v in CASING_VARIANTS:
-		_cached_wav("casing_drop:%d" % v, Callable(self, "_synth_casing_drop").bind(v))
-		await get_tree().process_frame
+		_bg_wav("casing_drop:%d" % v, Callable(self, "_synth_casing_drop").bind(v))
 	# Proximity-mine arm beep.
-	_cached_samples("mine_plant", Callable(self, "_synth_mine_plant"))
-	await get_tree().process_frame
+	_bg_samples("mine_plant", Callable(self, "_synth_mine_plant"))
 	# Everything else that used to synth on its first play mid-match. Timed
 	# on a laptop CPU: explosions 40-85 ms each, reload 20 ms, pickup drop and
 	# enemy siren ~16 ms, the rest 1-5 ms (but a frame's budget is 16).
@@ -655,10 +648,8 @@ func _warmup_specials_async() -> void:
 		if r_bucket in [4, 6, 8, 10]:
 			continue
 		for v in EXPLOSION_VARIANTS:
-			_cached_wav("explosion_bang:%d:%d" % [r_bucket, v], Callable(self, "_synth_explosion").bind(float(r_bucket), v))
-			await get_tree().process_frame
-			_cached_wav("explosion_rumble:%d:%d" % [r_bucket, v], Callable(self, "_synth_explosion_rumble").bind(float(r_bucket), v))
-			await get_tree().process_frame
+			_bg_wav("explosion_bang:%d:%d" % [r_bucket, v], Callable(self, "_synth_explosion").bind(float(r_bucket), v))
+			_bg_wav("explosion_rumble:%d:%d" % [r_bucket, v], Callable(self, "_synth_explosion_rumble").bind(float(r_bucket), v))
 	var one_offs := {
 		"pickup_drop": Callable(self, "_synth_pickup_drop"),
 		"enemy_incoming": Callable(self, "_synth_enemy_incoming"),
@@ -669,29 +660,93 @@ func _warmup_specials_async() -> void:
 		"dash": Callable(self, "_synth_dash"),
 	}
 	for key: String in one_offs:
-		_cached_samples(key, one_offs[key])
-		await get_tree().process_frame
+		_bg_samples(key, one_offs[key])
 	for step in 3:
-		_cached_samples("pick_beep_%d" % step, Callable(self, "_synth_pick_beep").bind(step))
-		await get_tree().process_frame
+		_bg_samples("pick_beep_%d" % step, Callable(self, "_synth_pick_beep").bind(step))
 	for v in CARD_FLIP_VARIANTS:
-		_cached_samples("card_flip:%d" % v, Callable(self, "_synth_card_flip").bind(v))
-		await get_tree().process_frame
+		_bg_samples("card_flip:%d" % v, Callable(self, "_synth_card_flip").bind(v))
 	# Hits at base damage and at a headshot's double, every variant.
 	for dmg_ratio: float in [1.0, 2.0]:
 		var dmg_bucket := int(round(dmg_ratio * 4.0))
 		for v in IMPACT_VARIANTS:
-			_cached_samples("impact:%d:%d" % [dmg_bucket, v], Callable(self, "_synth_impact").bind(dmg_ratio, v))
-			await get_tree().process_frame
+			_bg_samples("impact:%d:%d" % [dmg_bucket, v], Callable(self, "_synth_impact").bind(dmg_ratio, v))
 	for kind: String in ["body", "head"]:
 		for dmg: int in [0, int(Weapon.BASE_DAMAGE), int(Weapon.BASE_DAMAGE * 2.0)]:
 			var ratio := 1.0 if dmg == 0 else clampf(float(dmg) / Weapon.BASE_DAMAGE, 0.5, 5.0)
-			_cached_samples(_hitmarker_cache_key(kind, dmg), Callable(self, "_synth_hitmarker").bind(kind, ratio))
-			await get_tree().process_frame
+			_bg_samples(_hitmarker_cache_key(kind, dmg), Callable(self, "_synth_hitmarker").bind(kind, ratio))
 	# Bullets flying past at the base speed and size.
 	for v in BULLET_ZIP_VARIANTS:
-		_cached_wav("bullet_zip:10:10:%d" % v, Callable(self, "_synth_bullet_zip").bind(1.0, 1.0))
-		await get_tree().process_frame
+		_bg_wav("bullet_zip:10:10:%d" % v, Callable(self, "_synth_bullet_zip").bind(1.0, 1.0))
+
+
+# Warmup synths run here, on one low-priority thread, never on the main
+# thread. One synth per frame on the main thread still cost 20-110 ms frames,
+# and the whole pass ran ~10 s into the match: the first seconds of every
+# match stuttered (Joep, 2026-10-22). Synths only compute samples from their
+# arguments, so they are safe off the main thread. Results land in the caches
+# on the main thread (_bg_drain); a sound needed before its warmup finished
+# still synths on the spot, as before.
+var _bg_mutex := Mutex.new()
+var _bg_queue: Array = []  # [key, generator, as_wav]
+var _bg_done: Array = []  # [key, samples, wav or null]
+var _bg_thread: Thread = null
+
+
+func _bg_wav(key: String, generator: Callable) -> void:
+	_bg_enqueue(key, generator, true)
+
+
+func _bg_samples(key: String, generator: Callable) -> void:
+	_bg_enqueue(key, generator, false)
+
+
+func _bg_enqueue(key: String, generator: Callable, as_wav: bool) -> void:
+	if _wav_cache.has(key) or (not as_wav and _sample_cache.has(key)):
+		return
+	_bg_mutex.lock()
+	_bg_queue.append([key, generator, as_wav])
+	_bg_mutex.unlock()
+	if _bg_thread == null or not _bg_thread.is_alive():
+		if _bg_thread != null:
+			_bg_thread.wait_to_finish()
+		_bg_thread = Thread.new()
+		_bg_thread.start(_bg_run, Thread.PRIORITY_LOW)
+
+
+func _bg_run() -> void:
+	while true:
+		_bg_mutex.lock()
+		if _bg_queue.is_empty():
+			_bg_mutex.unlock()
+			return
+		var job: Array = _bg_queue.pop_front()
+		_bg_mutex.unlock()
+		var samples: PackedVector2Array = (job[1] as Callable).call()
+		var wav: AudioStreamWAV = _samples_to_wav(samples) if job[2] else null
+		_bg_mutex.lock()
+		_bg_done.append([job[0], samples, wav])
+		_bg_mutex.unlock()
+
+
+func _bg_drain() -> void:
+	_bg_mutex.lock()
+	var done := _bg_done
+	_bg_done = []
+	_bg_mutex.unlock()
+	for item: Array in done:
+		var key: String = item[0]
+		if not _sample_cache.has(key):
+			_sample_cache[key] = item[1]
+		if item[2] != null and not _wav_cache.has(key):
+			_wav_cache[key] = item[2]
+
+
+func _exit_tree() -> void:
+	if _bg_thread != null:
+		_bg_mutex.lock()
+		_bg_queue.clear()
+		_bg_mutex.unlock()
+		_bg_thread.wait_to_finish()
 
 
 func _shot_cache_key(w: Weapon, variant: int, last_in_mag: bool = false) -> String:

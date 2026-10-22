@@ -41,7 +41,6 @@ static func warmup_effect_shaders(scene_root: Node, force_draw: bool = true) -> 
 	GpuDebris.warmup(scene_root)
 	arena_gen.warmup_gpu_materials(scene_root)
 	_warmup_gun(scene_root)
-	_warmup_card_holo(scene_root)
 	if force_draw and DisplayServer.get_name() != "headless":
 		RenderingServer.force_draw(true)
 	Trace.span_end("shader_warmup (session)")
@@ -65,23 +64,6 @@ static func rewarm_on_screen(scene_root: Node) -> void:
 		return
 	effect_shaders_warmed = false
 	warmup_effect_shaders(scene_root)
-
-
-# The card pick's holo sheen is a canvas shader drawn over every card. Draw
-# it once, one pixel, nearly transparent, so the first pick doesn't compile it.
-static func _warmup_card_holo(scene_root: Node) -> void:
-	var layer := CanvasLayer.new()
-	layer.name = "CardHoloWarmup"
-	scene_root.add_child(layer)
-	var rect := ColorRect.new()
-	rect.size = Vector2.ONE
-	rect.modulate.a = 0.01
-	rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var mat := ShaderMaterial.new()
-	mat.shader = RenderPlayer.holo_shader()
-	rect.material = mat
-	layer.add_child(rect)
-	scene_root.get_tree().create_timer(0.6).timeout.connect(layer.queue_free)
 
 
 # The procedural gun's materials, drawn once at sub-pixel scale (same pattern

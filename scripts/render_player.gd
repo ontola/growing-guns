@@ -1061,68 +1061,12 @@ func _scale_card(card: Control, scale: float) -> void:
 		face.queue_redraw()
 
 
-## One holo shader for every card, built once. A fresh Shader per card made
-## each card pick compile it again on the main thread, mid-match.
-static var _holo_shader: Shader = null
-
-static func holo_shader() -> Shader:
-	if _holo_shader == null:
-		_holo_shader = Shader.new()
-		_holo_shader.code = "
-			shader_type canvas_item;
-			render_mode blend_add;
-			uniform sampler2D gradient : source_color;
-			uniform float speed = 0.5;
-			uniform float angle = 0.5;
-			uniform float intensity = 0.16;
-			uniform vec2 card_size = vec2(200.0, 280.0);
-			uniform float corner_radius = 12.0;
-
-			void fragment() {
-				vec2 uv = UV;
-				float s = sin(angle);
-				float c = cos(angle);
-				vec2 rot_uv = vec2(uv.x * c - uv.y * s, uv.x * s + uv.y * c);
-				float pos = fract(rot_uv.x * 1.5 + TIME * speed);
-				vec4 holo_color = texture(gradient, vec2(pos, 0.5));
-				float noise = fract(sin(dot(uv, vec2(12.9898, 78.233))) * 43758.5453);
-				holo_color.rgb += noise * 0.15;
-				vec2 px = uv * card_size;
-				vec2 d = max(vec2(0.0), abs(px - card_size * 0.5) - (card_size * 0.5 - corner_radius));
-				float dist = length(d) - corner_radius;
-				float mask = smoothstep(1.0, -1.0, dist);
-				COLOR = vec4(holo_color.rgb * intensity * mask, 1.0);
-			}
-		"
-	return _holo_shader
-
-
+## Rare cards pulse their gold glow. The rainbow holo sheen that used to
+## sit on top drew diagonal bands; it went (Joep, 2026-10-22).
 func _add_holo_overlay(panel: Control, style: StyleBoxFlat) -> void:
 	var tw_border := panel.create_tween().set_loops()
 	tw_border.tween_property(style, "shadow_color", Color(1.0, 0.55, 0.2, 0.45), 1.8)
 	tw_border.tween_property(style, "shadow_color", Color(CardFace.GOLD, 0.4), 1.8)
-	var shader := holo_shader()
-	var holo_mat := ShaderMaterial.new()
-	holo_mat.shader = shader
-	var grad := Gradient.new()
-	grad.set_offsets(PackedFloat32Array([0.0, 0.25, 0.5, 0.75, 1.0]))
-	grad.set_colors(PackedColorArray([
-		Color(1.0, 0.3, 0.3),
-		Color(1.0, 0.9, 0.3),
-		Color(0.3, 1.0, 0.3),
-		Color(0.3, 0.6, 1.0),
-		Color(1.0, 0.3, 1.0),
-	]))
-	var grad_tex := GradientTexture1D.new()
-	grad_tex.gradient = grad
-	holo_mat.set_shader_parameter("gradient", grad_tex)
-	var holo_overlay := ColorRect.new()
-	holo_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	holo_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	holo_overlay.material = holo_mat
-	holo_mat.set_shader_parameter("corner_radius", 1.0)
-	holo_mat.set_shader_parameter("intensity", 0.1)
-	panel.add_child(holo_overlay)
 
 
 func _card_stat_diff(card_id: String) -> Array[String]:
