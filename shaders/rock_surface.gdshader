@@ -35,6 +35,13 @@ varying float v_inst_seed;
 varying float v_crack_mul;
 varying float v_tint_mul;
 varying vec3 v_dmg_t01;
+// The block's own axes in world space (unit length). Rotated buildings and
+// cover blocks need these: projecting a face onto WORLD planes picked by its
+// LOCAL axis put a 90-degree-turned face edge-on to its plane, so the noise
+// smeared into one-dimensional streaks (Joep, 2026-10-22).
+varying vec3 v_axis_x;
+varying vec3 v_axis_y;
+varying vec3 v_axis_z;
 
 float sample_noise(vec2 uv) {
 	return texture(noise_texture, uv).r;
@@ -135,7 +142,23 @@ float face_noise(vec3 p, vec3 face_axis, float scale) {
 	return sample_noise(p.xy * scale + seed2 * 2.3);
 }
 
+// Noise on a face, in world units along the face's own two axes, so it
+// stays two-dimensional and evenly scaled however the block is turned.
+float face_noise_world(vec3 p, vec3 face_axis, float scale, vec3 ax, vec3 ay, vec3 az) {
+	vec2 seed2 = vec2(material_seed * 0.137, material_seed * 0.419);
+	if (abs(face_axis.x) > 0.5) {
+		return sample_noise(vec2(dot(p, ay), dot(p, az)) * scale + seed2);
+	}
+	if (abs(face_axis.y) > 0.5) {
+		return sample_noise(vec2(dot(p, ax), dot(p, az)) * scale + seed2 * 1.7);
+	}
+	return sample_noise(vec2(dot(p, ax), dot(p, ay)) * scale + seed2 * 2.3);
+}
+
 void vertex() {
+	v_axis_x = normalize(MODEL_MATRIX[0].xyz);
+	v_axis_y = normalize(MODEL_MATRIX[1].xyz);
+	v_axis_z = normalize(MODEL_MATRIX[2].xyz);
 	vec3 lp = VERTEX;
 	vec3 ap = abs(lp);
 	vec3 face_axis = dominant_face_axis(lp);
@@ -152,7 +175,10 @@ void vertex() {
 	v_crack_mul = INSTANCE_CUSTOM.g > 0.01 ? INSTANCE_CUSTOM.g : 1.0;
 	v_tint_mul = INSTANCE_CUSTOM.b > 0.01 ? INSTANCE_CUSTOM.b : 1.0;
 
-	vec3 bump_p = lp * 2.4 + vec3(inst_seed * 0.013, inst_seed * 0.027, inst_seed * 0.041);
+	// In metres along the block, not unit-cube coordinates: a long wall
+	// stretched its bumps into lengthwise streaks.
+	vec3 obj_scale = vec3(length(MODEL_MATRIX[0].xyz), length(MODEL_MATRIX[1].xyz), length(MODEL_MATRIX[2].xyz));
+	vec3 bump_p = lp * obj_scale * 2.4 + vec3(inst_seed * 0.013, inst_seed * 0.027, inst_seed * 0.041);
 	float bump = face_noise(bump_p, face_axis, noise_scale * 3.6);
 	float chip = face_noise(bump_p * 2.3 + vec3(0.17), face_axis, noise_scale * 8.5);
 	float disp = (bump * 0.62 + chip * 0.38 - 0.5) * deform_amount * deform_mul * v_face_mask;
@@ -255,8 +281,8 @@ void fragment() {
 	float bevel = smoothstep(0.58, 0.86, cornerness);
 
 	vec3 sample_p = v_world_pos + vec3(inst_seed * 0.31, inst_seed * 0.53, inst_seed * 0.71);
-	float rock = face_noise(sample_p, face_local, noise_scale);
-	float detail = face_noise(sample_p, face_local, noise_scale * detail_scale);
+	float rock = face_noise_world(sample_p, face_local, noise_scale, v_axis_x, v_axis_y, v_axis_z);
+	float detail = face_noise_world(sample_p, face_local, noise_scale * detail_scale, v_axis_x, v_axis_y, v_axis_z);
 	float combined = rock * 0.58 + detail * 0.42;
 
 	float pit = 1.0 - smoothstep(0.14, 0.38, combined);
