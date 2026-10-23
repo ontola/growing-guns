@@ -205,6 +205,14 @@ func notify_ready(session_id: String) -> void:
 func notify_finished(session_id: String) -> void:
 	_send({"type": PROTOCOL.MSG_FINISHED, "session": session_id})
 
+## Add one short line to the room log that players read back in the
+## GameNight app ("New run", "Ann won round 3"). It never shows on the TV.
+## Use it for things worth remembering, a round or a run, never per frame:
+## the host keeps one line per two seconds and cuts it at 120 characters.
+func add_room_log(text: String) -> void:
+	if session.is_empty() or phase != "running": return
+	_send({"type": PROTOCOL.MSG_ROOM_LOG, "session": session, "text": text})
+
 ## Opt into live roster updates ([signal roster_changed]) for this session.
 ## Call it from [signal prepared], before [method notify_ready]. Pass
 ## `instant_join = true` only when a running match can take a new player at
