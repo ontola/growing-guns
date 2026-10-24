@@ -31,3 +31,23 @@ jobs:
           entrypoint: MoreRounds.exe
           version: ci-${{ github.event.workflow_run.head_sha }}-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
           channel: preview
+      # Store data follows gamenight.json on every build (players, title,
+      # tagline). Only the manual release workflow did this, so the store
+      # still said 2-4 players after players.min went to 1.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          path: source
+          sparse-checkout: gamenight.json
+          sparse-checkout-cone-mode: false
+      - uses: actions/checkout@v4
+        with:
+          repository: ontola/gamenight
+          ref: 581dfed420c088f25781ea545d8e921e5934380e
+          path: publisher
+          sparse-checkout: scripts/gamenight-publish.py
+          sparse-checkout-cone-mode: false
+      - name: Update the store listing from gamenight.json
+        env:
+          GAMENIGHT_API_TOKEN: ${{ secrets.GAMENIGHT_API_TOKEN }}
+        run: python3 publisher/scripts/gamenight-publish.py store --manifest source/gamenight.json
